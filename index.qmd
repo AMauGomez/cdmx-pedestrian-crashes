@@ -127,13 +127,14 @@ A common saying in Mexico City is that **"at rush hour, someone is hit by a car 
 - **With two years** the answer is clear: someone was hit every **`r round(mu_periodo, 1)` minutes** on average (95% CI `r round(ic_periodo[1], 1)`–`r round(ic_periodo[2], 1)`, z = `r round(z, 1)`). That is `r round(60 / mu_periodo, 2)` confirmed crashes per hour instead of 2.
 
 ```{r}
+#| label: answer-plot
 #| fig-height: 2.6
 tibble(datos = factor(c("March 2023 (121 intervals)", "2022–2023 (month bootstrap)"), c("March 2023 (121 intervals)", "2022–2023 (month bootstrap)")),
        est = c(mean(x_marzo), mu_periodo), inf = c(ic_marzo[1], ic_periodo[1]), sup = c(ic_marzo[2], ic_periodo[2])) |>
   ggplot(aes(est, datos)) + geom_vline(xintercept = 30, linetype = 2, colour = "#d93025") +
   geom_pointrange(aes(xmin = inf, xmax = sup), colour = "#1a73e8", linewidth = 1) +
-  annotate("text", x = 30, y = 2.45, label = "the claim: 30 min", colour = "#d93025", hjust = 1.05, size = 3.5) +
-  labs(x = "Mean minutes between pedestrian crashes, weekday rush hour (95% CI)", y = NULL)
+  annotate("text", x = 30, y = 2.45, label = "the claim: 30 min", colour = "#d93025", hjust = -0.05, size = 3.5) +
+  labs(x = "Minutes between crashes, weekday 18:00–21:00 (95% CI)", y = NULL)
 ```
 
 The statistics are standard. **What makes the difference is three data problems that, left alone, would have produced a confident wrong answer.**
@@ -159,6 +160,7 @@ The usual dispersion test on daily counts did not reject the Poisson model (p �
 Instead of restricting the analysis to a window where the rate is constant, the last chapter **models** the rate. It uses the tool insurers use for claim frequency: a Poisson/negative binomial GLM with an exposure offset, fitted on all hours of 2022–2023 (`r f0(nrow(ent))` confirmed crashes).
 
 ```{r}
+#| label: hour-plot
 #| fig-height: 3.6
 ggplot(rr_hora, aes(hora, rr)) +
   annotate("rect", xmin = 17.5, xmax = 20.5, ymin = -Inf, ymax = Inf, fill = "#e8f0fe") +
@@ -168,11 +170,12 @@ ggplot(rr_hora, aes(hora, rr)) +
        subtitle = "Shaded: the 18:00–21:00 window used in the course")
 ```
 
-- **Peak risk is early afternoon, not the evening rush.** The course window was chosen because its rate is stable, not because it is the most dangerous.
+- **The evening rush is not the riskiest time of day.** The rate is high from 13:00 to 20:00, about four times the rate at midnight, and peaks around 14:00 (the intervals for 14:00 and 19:00 overlap). The course window was chosen because its rate is stable, not because it is the most dangerous.
 - **The denominator decides the conclusion.** Per 100,000 residents, Cuauhtémoc has `r round(tasas$tasa[tasas$alcaldia == "Cuauhtémoc"])` crashes a year, `r round(tasas$tasa[tasas$alcaldia == "Cuauhtémoc"] / tasas$tasa[tasas$alcaldia == "Iztapalapa"], 1)` times Iztapalapa and three times the city's `r round(tasa_ciudad)`. But hundreds of thousands of people walk there without living there. A residential denominator measures the wrong exposure, which is the same question as "insured cars or kilometres driven?" in motor insurance.
 - **Out-of-sample validation found what the fit did not.** Predicting January–February 2024 by borough (data the model never saw), `r sum(dentro)` of `r length(dentro)` observations fall inside the 90% prediction intervals. The **total**, however, is underpredicted by `r round(100 * (1 - sum(nuevos$pred) / sum(nuevos$obs)))`%, because January–February 2022 were unusually low (the period coincides with the Omicron wave). Validating at only one level would have missed it.
 
 ```{r}
+#| label: borough-plot
 #| fig-height: 4.6
 ggplot(tasas, aes(tasa, reorder(alcaldia, tasa))) +
   geom_vline(xintercept = tasa_ciudad, linetype = 2, colour = "grey40") +

@@ -98,7 +98,7 @@ bind_rows(razones(binneg_t, "dia") |> mutate(efecto = "día (contra lunes)"),
 
 Lo que dice el modelo:
 
-- **La hora es, con mucho, el efecto más grande.** La tasa más alta no está en la ventana de 18 a 21 h, sino **a primera hora de la tarde**. La ventana del curso se eligió por tener una tasa estable, no por ser la más peligrosa.
+- **La hora es, con mucho, el efecto más grande.** La tasa es alta **toda la tarde y la noche** (de 13 a 20 h es unas cuatro veces la de la medianoche), con el punto más alto alrededor de las 14 h. Los intervalos de las 14 h y las 19 h se traslapan, así que no podemos afirmar que una hora sea claramente la peor; lo que sí muestra el modelo es que **la hora pico de la noche no es especialmente peligrosa**. La ventana del curso se eligió por tener una tasa estable, no por ser la más peligrosa.
 - **El día de la semana importa poco:** el viernes tiene la tasa más alta y el domingo la más baja, con diferencias de 10 a 15% respecto al lunes.
 - **Hay estacionalidad:** el otoño (septiembre a diciembre) es la temporada más alta. Enero sale como el mes más tranquilo, pero con cautela: enero y febrero de 2022 fueron atípicamente bajos (lo vemos en la sección 6.4).
 - 2023 y 2022 son muy parecidos.
@@ -216,7 +216,7 @@ Enero y febrero de 2022 fueron mucho más bajos que los de 2023 y 2024, que son 
 
 ## Lo que agrega este capítulo
 
-- **La ventana del curso era una simplificación consciente.** El GLM confirma que la tasa cambia mucho con la hora (la tarde temprana es la de mayor riesgo) y algo con el día y con la temporada.
+- **La ventana del curso era una simplificación consciente.** El GLM confirma que la tasa cambia mucho con la hora (es alta toda la tarde, no solo en la hora pico) y algo con el día y con la temporada.
 - **La heterogeneidad del capítulo 2 era estacional.** Un modelo con mes del año la explica.
 - **El denominador decide la conclusión.** Con la población residente como exposición, Cuauhtémoc parece la alcaldía más riesgosa; con la población que de verdad camina ahí, el resultado podría ser otro.
 - **Validar fuera de muestra encontró lo que el ajuste no mostraba**: un sesgo en el total por un periodo atípico en los datos de entrenamiento.

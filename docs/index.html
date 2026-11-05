@@ -189,7 +189,7 @@ borough-months of 2024 inside the 90% prediction intervals
 <div class="cell-output-display">
 <div>
 <figure class="figure">
-<p><img src="index_files/figure-html/unnamed-chunk-3-1.png" class="img-fluid figure-img" width="672"></p>
+<p><img src="index_files/figure-html/answer-plot-1.png" class="img-fluid figure-img" width="672"></p>
 </figure>
 </div>
 </div>
@@ -219,13 +219,13 @@ borough-months of 2024 inside the 90% prediction intervals
 <div class="cell-output-display">
 <div>
 <figure class="figure">
-<p><img src="index_files/figure-html/unnamed-chunk-4-1.png" class="img-fluid figure-img" width="672"></p>
+<p><img src="index_files/figure-html/hour-plot-1.png" class="img-fluid figure-img" width="672"></p>
 </figure>
 </div>
 </div>
 </div>
 <ul>
-<li><strong>Peak risk is early afternoon, not the evening rush.</strong> The course window was chosen because its rate is stable, not because it is the most dangerous.</li>
+<li><strong>The evening rush is not the riskiest time of day.</strong> The rate is high from 13:00 to 20:00, about four times the rate at midnight, and peaks around 14:00 (the intervals for 14:00 and 19:00 overlap). The course window was chosen because its rate is stable, not because it is the most dangerous.</li>
 <li><strong>The denominator decides the conclusion.</strong> Per 100,000 residents, Cuauhtémoc has 301 crashes a year, 3.8 times Iztapalapa and three times the city’s 100. But hundreds of thousands of people walk there without living there. A residential denominator measures the wrong exposure, which is the same question as “insured cars or kilometres driven?” in motor insurance.</li>
 <li><strong>Out-of-sample validation found what the fit did not.</strong> Predicting January–February 2024 by borough (data the model never saw), 29 of 32 observations fall inside the 90% prediction intervals. The <strong>total</strong>, however, is underpredicted by 7%, because January–February 2022 were unusually low (the period coincides with the Omicron wave). Validating at only one level would have missed it.</li>
 </ul>
@@ -233,7 +233,7 @@ borough-months of 2024 inside the 90% prediction intervals
 <div class="cell-output-display">
 <div>
 <figure class="figure">
-<p><img src="index_files/figure-html/unnamed-chunk-5-1.png" class="img-fluid figure-img" width="672"></p>
+<p><img src="index_files/figure-html/borough-plot-1.png" class="img-fluid figure-img" width="672"></p>
 </figure>
 </div>
 </div>

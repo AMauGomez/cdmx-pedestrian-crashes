@@ -601,9 +601,13 @@ razones(binneg_t, &quot;hora&quot;) |&gt; mutate(hora = as.integer(nivel)) |&gt;
 <p>Lo que dice el modelo:</p>
 <ul>
 <li><strong>La hora es, con mucho, el efecto más grande.</strong> La
-tasa más alta no está en la ventana de 18 a 21 h, sino <strong>a primera
-hora de la tarde</strong>. La ventana del curso se eligió por tener una
-tasa estable, no por ser la más peligrosa.</li>
+tasa es alta <strong>toda la tarde y la noche</strong> (de 13 a 20 h es
+unas cuatro veces la de la medianoche), con el punto más alto alrededor
+de las 14 h. Los intervalos de las 14 h y las 19 h se traslapan, así que
+no podemos afirmar que una hora sea claramente la peor; lo que sí
+muestra el modelo es que <strong>la hora pico de la noche no es
+especialmente peligrosa</strong>. La ventana del curso se eligió por
+tener una tasa estable, no por ser la más peligrosa.</li>
 <li><strong>El día de la semana importa poco:</strong> el viernes tiene
 la tasa más alta y el domingo la más baja, con diferencias de 10 a 15%
 respecto al lunes.</li>
@@ -776,8 +780,8 @@ un ajuste automático.</p>
 <ul>
 <li><strong>La ventana del curso era una simplificación
 consciente.</strong> El GLM confirma que la tasa cambia mucho con la
-hora (la tarde temprana es la de mayor riesgo) y algo con el día y con
-la temporada.</li>
+hora (es alta toda la tarde, no solo en la hora pico) y algo con el día
+y con la temporada.</li>
 <li><strong>La heterogeneidad del capítulo 2 era estacional.</strong> Un
 modelo con mes del año la explica.</li>
 <li><strong>El denominador decide la conclusión.</strong> Con la

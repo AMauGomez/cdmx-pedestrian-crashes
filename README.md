@@ -17,6 +17,8 @@ A common saying in Mexico City: *"at rush hour, someone is hit by a car every ha
 | March 2023 (121 intervals) | 33.9 | 28.6–40.8 | Not rejected (exact χ² test, p = 0.16), but power against 35 min was only 42% |
 | **2022–2023** (2,554 intervals) | **36.6** | **34.6–38.8** (month bootstrap) | **Rejected** (z = 6.1): 1.64 crashes per hour, not 2; the claim overstates the frequency by about 22% |
 
+![Estimates vs the claim](docs/index_files/figure-html/answer-plot-1.png)
+
 ## Three traps
 
 1. **The observation window biases the answer, and every diagnostic missed it.** Measuring intervals only inside each evening discards the time before the first crash and after the last one. In a simulated Poisson process with a true mean of 35 min it estimates 26.9 min, and the biased data *still pass* the histogram, Q-Q plot and goodness-of-fit checks. On the real data it gives 27 min, which would reverse the conclusion. Fix: a "rush-hour clock" that stitches evenings together, justified by memorylessness and checked against the exposure estimator.
@@ -27,23 +29,27 @@ A common saying in Mexico City: *"at rush hour, someone is hit by a car every ha
 
 A negative binomial GLM fitted to all hours of 2022–2023 (18,442 confirmed crashes), the same model insurers use for claim frequency:
 
-- **Peak risk is early afternoon, not the evening rush.**
+- **The evening rush is not the riskiest time of day.** The rate is high from 13:00 to 20:00, about four times the rate at midnight, and peaks around 14:00.
 - **The denominator decides the conclusion:** per resident, Cuauhtémoc has 3.8 times the rate of Iztapalapa, but most people walking there do not live there.
 - **Out-of-sample validation (Jan–Feb 2024, by borough):** 29 of 32 observations fall inside the 90% prediction intervals, yet the total is underpredicted by 7% because early 2022 was atypically low. Validating at a single level would have missed it.
 
-## Chapters (Spanish)
+![Crash rate by hour](docs/index_files/figure-html/hour-plot-1.png)
 
-| | Chapter | Syllabus unit |
+## How the analysis unfolds
+
+The project is also a course: each chapter answers one part of the question with one unit of the syllabus. Chapters are in Spanish; click to read them rendered.
+
+| | Chapter | What it finds |
 |---|---|---|
-| 0 | [`0-la-pregunta.Rmd`](chapters/0-la-pregunta.Rmd): the claim, the data, the variable | — |
-| 1 | [`1-distribuciones-muestrales.Rmd`](chapters/1-distribuciones-muestrales.Rmd): exact sampling distribution, χ² pivot, order statistics, why normal theory fails here | 1 |
-| 2 | [`2-analisis-exploratorio.Rmd`](chapters/2-analisis-exploratorio.Rmd): the three traps, independence and identical distribution | 2 |
-| 3 | [`3-estimacion-puntual.Rmd`](chapters/3-estimacion-puntual.Rmd): moments, MLE, Bayesian/credibility, Cramér–Rao, sufficiency | 3 |
-| 4 | [`4-intervalos-de-confianza.Rmd`](chapters/4-intervalos-de-confianza.Rmd): pivotal, likelihood, Wald and Garwood intervals, coverage, bootstrap | 4 |
-| 5 | [`5-pruebas-de-hipotesis.Rmd`](chapters/5-pruebas-de-hipotesis.Rmd): Neyman–Pearson, power, LRT, paired vs independent samples, the answer | 5 |
-| 6 | [`6-modelos-de-frecuencia.Rmd`](chapters/6-modelos-de-frecuencia.Rmd): Poisson/NB GLM with exposure, seasonality, out-of-sample validation | beyond |
+| 0 | [The question](https://amaugomez.github.io/cdmx-pedestrian-crashes/chapters/0-la-pregunta.html) | Turns the saying into a testable parameter: the mean time between confirmed crashes, weekdays 18:00–21:00 |
+| 1 | [Sampling distributions](https://amaugomez.github.io/cdmx-pedestrian-crashes/chapters/1-distribuciones-muestrales.html) | The exact distribution of the sample mean and an exact χ² pivot; normal-theory tests fail on data this skewed (the t test doubles its error rate) |
+| 2 | [Exploratory analysis](https://amaugomez.github.io/cdmx-pedestrian-crashes/chapters/2-analisis-exploratorio.html) | The three traps: window bias, duplicate confirmations, non-homogeneous months; checks of independence and identical distribution |
+| 3 | [Point estimation](https://amaugomez.github.io/cdmx-pedestrian-crashes/chapters/3-estimacion-puntual.html) | Moments, maximum likelihood and Bayesian estimates agree (≈34 min in March 2023); the mean is efficient and the minimum-variance unbiased estimator |
+| 4 | [Confidence intervals](https://amaugomez.github.io/cdmx-pedestrian-crashes/chapters/4-intervalos-de-confianza.html) | Exact and approximate intervals and their simulated coverage; with one month 30 min is plausible, with two years it is not |
+| 5 | [Hypothesis testing](https://amaugomez.github.io/cdmx-pedestrian-crashes/chapters/5-pruebas-de-hipotesis.html) | Power analysis explains why one month was not enough; the final test rejects the claim (z = 6.1) |
+| 6 | [Frequency models](https://amaugomez.github.io/cdmx-pedestrian-crashes/chapters/6-modelos-de-frecuencia.html) | Negative binomial GLM with exposure: risk is high all afternoon, not just at rush hour; the denominator problem across boroughs, out-of-sample validation on 2024 |
 
-Rendered versions are linked from the [report](https://amaugomez.github.io/cdmx-pedestrian-crashes/).
+Source code for every chapter is in [`chapters/`](chapters/).
 
 ## Reproduce it
 
