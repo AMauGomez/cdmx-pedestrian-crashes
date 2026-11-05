@@ -1,0 +1,8 @@
+.Rhistory
+.RData
+.quarto/
+chapters/datos/inViales_2022_2024.csv
+chapters/*.html
+chapters/*_files/
+
+/.quarto/

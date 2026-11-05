@@ -1,0 +1,143 @@
+---
+title: "1. Distribuciones muestrales"
+subtitle: "Inferencia Estadística · Caso de estudio: atropellamientos en la CDMX"
+output: html_document
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, fig.width = 8, fig.height = 4.5)
+source("funciones-caso.R")
+set.seed(2026)
+```
+
+*Temario: unidad 1 (Inferencia Estadística, clave 1541).*
+
+## 1.1 Población, muestra y estadística
+
+- **Población:** todos los intervalos entre atropellamientos en hora pico de días laborables.
+- **Muestra:** los intervalos de un mes.
+- **Estadística:** cualquier función de la muestra, como la media $\bar X$. Como la muestra es aleatoria, $\bar X$ también lo es: cada mes da un valor distinto.
+
+```{r}
+atropellamientos <- leer_atropellamientos()
+limpios <- hora_pico(atropellamientos) |> depurar_duplicados()
+meses <- format(seq(as.Date("2022-01-01"), as.Date("2023-12-01"), by = "month"), "%Y-%m")
+por_mes <- tibble(mes = meses,
+                  n = sapply(meses, function(m) length(tiempos_mes(limpios, m))),
+                  media = sapply(meses, function(m) mean(tiempos_mes(limpios, m))))
+summary(por_mes$media)
+
+ggplot(por_mes, aes(as.Date(paste0(mes, "-01")), media)) +
+  geom_hline(yintercept = 30, linetype = 2, colour = "grey40") +
+  geom_point(size = 2.5, colour = "#1a73e8") + geom_line(colour = "#1a73e8", alpha = 0.4) +
+  labs(x = NULL, y = "Media muestral (minutos)",
+       title = "Cada mes es una muestra distinta y da una media distinta",
+       subtitle = "Minutos entre atropellamientos en hora pico, 24 meses (2022-2023); línea punteada: 30 minutos")
+```
+
+¿Toda esta variación es azar, o hay meses en que de verdad atropellan más? Esa pregunta la contestamos en el capítulo 2. Aquí empezamos por la parte que sí es azar: cuánto varía $\bar X$ aunque $\mu$ no cambie.
+
+La pregunta de esta unidad: **¿cómo se distribuye $\bar X$?** Si lo sabemos, sabremos cuánto puede alejarse de $\mu$ solo por azar.
+
+## 1.2 Distribuciones muestrales
+
+### 1.2.1 Distribuciones de las estadísticas muestrales bajo normalidad
+
+Los resultados clásicos suponen que $X_1, \dots, X_n$ son independientes con distribución $N(\mu, \sigma^2)$. En ese caso:
+
+- $\bar X \sim N(\mu, \sigma^2/n)$;
+- $(n-1)S^2/\sigma^2 \sim \chi^2_{n-1}$, independiente de $\bar X$;
+- $\dfrac{\bar X - \mu}{S/\sqrt n} \sim t_{n-1}$;
+- el cociente de las varianzas muestrales de dos muestras normales independientes, cada una dividida entre su $\sigma^2$, tiene distribución $F$.
+
+Son la base de las pruebas t y F. Pero nuestros tiempos **no son normales**: son muy asimétricos. ¿Qué pasa si usamos esos resultados de todos modos? Simulamos muestras de tamaño 10 de una normal y de una exponencial, con la misma media y varianza, y vemos con qué frecuencia cada estadística cae en las colas de 2.5% que predice la teoría normal (deberían ser 5% en total):
+
+```{r}
+B <- 20000; k <- 10
+colas <- function(generar, mu, sigma) {
+  r <- replicate(B, { y <- generar()
+    c(t = (mean(y) - mu) / (sd(y) / sqrt(k)), ji = (k - 1) * var(y) / sigma^2) })
+  c(t = mean(abs(r["t", ]) > qt(0.975, k - 1)),
+    ji_cuadrada = mean(r["ji", ] < qchisq(0.025, k - 1) | r["ji", ] > qchisq(0.975, k - 1)))
+}
+round(rbind(normal = colas(function() rnorm(k, 35, 35), 35, 35),
+            exponencial = colas(function() rexp(k, 1 / 35), 35, 35)), 3)
+```
+
+Con datos normales, ambas estadísticas caen en las colas el 5% de las veces, como dice la teoría. Con datos exponenciales, la t cae en las colas el doble de veces (10%) y la estadística de la varianza casi cinco veces más (24%). Los resultados bajo normalidad **no se pueden usar a ciegas**: necesitamos la distribución muestral que corresponde a nuestro modelo.
+
+### La media de una muestra exponencial
+
+Si $X_1, \dots, X_n$ son independientes con distribución exponencial de media $\mu$, la suma es gamma y, por lo tanto,
+
+$$
+\bar X \sim \text{Gamma}\left(n, \ \text{tasa} = \frac{n}{\mu}\right), \qquad E[\bar X] = \mu, \qquad \operatorname{Var}(\bar X) = \frac{\mu^2}{n}.
+$$
+
+En el capítulo 2 comprobaremos que el modelo exponencial es razonable en hora pico. Por ahora, verifiquemos el resultado por simulación con valores parecidos a los de nuestros datos: $\mu = 35$ minutos y $n = 120$ intervalos.
+
+```{r}
+mu <- 35; n <- 120; B <- 20000
+medias <- replicate(B, mean(rexp(n, rate = 1 / mu)))
+
+c(media_simulada = mean(medias), teorica = mu)
+c(sd_simulada = sd(medias), teorica = mu / sqrt(n))
+
+ggplot(data.frame(medias), aes(medias)) +
+  geom_histogram(aes(y = after_stat(density)), bins = 60, fill = "grey80", colour = "white") +
+  stat_function(fun = dgamma, args = list(shape = n, rate = n / mu), aes(colour = "Gamma exacta"), linewidth = 1) +
+  stat_function(fun = dnorm, args = list(mean = mu, sd = mu / sqrt(n)), aes(colour = "Normal (TLC)"), linewidth = 1, linetype = 2) +
+  scale_colour_manual(values = c("Gamma exacta" = "#d93025", "Normal (TLC)" = "#1a73e8"), name = NULL) +
+  labs(x = "Media muestral (minutos)", y = "Densidad",
+       title = "Distribución muestral de la media: 20,000 muestras de 120 intervalos")
+```
+
+Con $n = 120$ la gamma y la normal casi coinciden (teorema del límite central). Con muestras chicas no:
+
+```{r, fig.height = 3.8}
+compara <- bind_rows(lapply(c(3, 10, 30), function(k) {
+  tibble(n = paste("n =", k), media = replicate(B, mean(rexp(k, 1 / mu))))
+}))
+ggplot(compara, aes(media)) +
+  geom_density(fill = "#1a73e8", alpha = 0.3) +
+  facet_wrap(~ n, scales = "free") +
+  labs(x = "Media muestral", y = NULL, title = "Con pocas observaciones la distribución de la media es asimétrica")
+```
+
+**Para llevar al resto del curso.** La cantidad $2n\bar X / \mu$ tiene distribución $\chi^2_{2n}$ sin importar el valor de $\mu$ (es un *pivote*). La usaremos en el capítulo 4 para construir un intervalo de confianza exacto.
+
+```{r}
+pivote <- 2 * n * medias / mu
+ks.test(pivote, "pchisq", df = 2 * n)$p.value  # compatible con una ji cuadrada de 2n grados
+```
+
+### 1.2.2 Distribución de las estadísticas de orden
+
+**El mínimo.** Supongamos que dividimos la ciudad en $k$ zonas independientes, cada una con atropellamientos exponenciales de media $\mu_j$. El tiempo hasta el **primer** atropellamiento en cualquier zona es el mínimo, y
+
+$$
+\min(X_1, \dots, X_k) \sim \text{Exponencial}\left(\text{tasa} = \sum_j \frac{1}{\mu_j}\right).
+$$
+
+Por eso, aunque en cada alcaldía los atropellamientos sean poco frecuentes, en la ciudad entera ocurren cada pocos minutos.
+
+```{r}
+mu_zona <- 16 * 35          # 16 alcaldías iguales con la misma tasa total de la ciudad
+minimos <- replicate(B, min(rexp(16, rate = 1 / mu_zona)))
+c(media_simulada = mean(minimos), teorica = mu_zona / 16)
+```
+
+**El máximo.** El intervalo más largo de una muestra, $X_{(n)}$, tiene función de distribución $F(x)^n$. Sirve para preguntas como "¿es raro pasar una hora sin atropellamientos?".
+
+```{r}
+x <- muestra_curso(atropellamientos)
+c(maximo_observado = max(x),
+  probabilidad_de_superarlo = 1 - pexp(max(x), rate = 1 / mean(x))^length(x))
+```
+
+## Lo que ya sabemos y lo que falta
+
+- Los resultados clásicos bajo normalidad ($t$, $\chi^2$, $F$) no aplican a ciegas a datos asimétricos como los nuestros.
+- La media de un mes cambia de un mes a otro; su variabilidad depende de $\mu$ y de $n$: $\operatorname{sd}(\bar X) = \mu / \sqrt n$.
+- Bajo el modelo exponencial conocemos su distribución exacta, y tenemos un pivote $\chi^2$.
+- **Falta** comprobar que el modelo exponencial es razonable para nuestros datos. Eso es el capítulo 2.

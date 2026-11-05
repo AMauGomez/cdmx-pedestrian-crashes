@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If you use this analysis or the teaching materials, please cite them as below."
+title: "Is someone hit by a car every 30 minutes in Mexico City? A statistical inference case study"
+authors:
+  - family-names: "Gómez-Jiménez"
+    given-names: "Aaron Mauricio"
+    orcid: "https://orcid.org/0009-0003-1099-0431"
+license: MIT
+repository-code: "https://github.com/AMauGomez/cdmx-pedestrian-crashes"
+url: "https://amaugomez.github.io/cdmx-pedestrian-crashes/"
+date-released: 2026-11-05

@@ -1,0 +1,237 @@
+---
+title: "5. Pruebas de hipótesis"
+subtitle: "Inferencia Estadística · Caso de estudio: atropellamientos en la CDMX"
+output: html_document
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, fig.width = 8, fig.height = 4.5)
+source("funciones-caso.R")
+set.seed(2026)
+```
+
+*Temario: unidad 5 (Inferencia Estadística, clave 1541).*
+
+Llegamos a la pregunta del primer día: **¿en hora pico atropellan a alguien cada media hora?** Ya tenemos un modelo verificado (capítulo 2), el mejor estimador (capítulo 3) e intervalos (capítulo 4). Ahora la convertimos en una **decisión** con errores controlados.
+
+```{r}
+atropellamientos <- leer_atropellamientos()
+x <- muestra_curso(atropellamientos)
+n <- length(x); suma <- sum(x)
+c(n = n, media = mean(x))
+```
+
+## 5.1 Hipótesis estadística
+
+Una **hipótesis estadística** es una afirmación sobre la distribución de la población; en nuestro modelo, una afirmación sobre $\mu$. La frase "cada media hora" se traduce en la **hipótesis nula** $H_0: \mu = 30$, que contrastamos contra la **alternativa** $H_1: \mu \neq 30$.
+
+¿Una o dos colas? Hay que decidirlo **antes** de ver los datos. La frase no dice si los atropellamientos son más o menos frecuentes, así que usamos la alternativa de dos colas. Elegir una cola después de ver que $\bar x > 30$ duplica, en la práctica, la probabilidad de equivocarse.
+
+## 5.2 Hipótesis simples y compuestas
+
+Una hipótesis es **simple** si determina la distribución por completo y **compuesta** si no. $H_0: \mu = 30$ es simple: dice que $X \sim \text{Exponencial}(\text{media } 30)$. $H_1: \mu \neq 30$ es compuesta: abarca una infinidad de valores. Esta distinción importa en las secciones 5.5 y 5.7.
+
+## 5.3 Región crítica
+
+Una prueba es una regla para decidir con los datos: la **región crítica** es el conjunto de muestras para las que rechazamos $H_0$. Para definirla necesitamos una estadística cuya distribución conozcamos si $H_0$ es cierta. El pivote del capítulo 1 sirve:
+
+$$
+Q_0 = \frac{2\sum X_i}{30} \sim \chi^2_{2n} \quad \text{si } H_0 \text{ es cierta}.
+$$
+
+Si $\mu > 30$, $Q_0$ tiende a ser grande; si $\mu < 30$, chica. Con nivel $\alpha = 0.05$, la región crítica son las dos colas: rechazamos si $Q_0 < \chi^2_{2n,\,0.025}$ o $Q_0 > \chi^2_{2n,\,0.975}$.
+
+```{r}
+q0 <- 2 * suma / 30
+cola_inferior <- pchisq(q0, 2 * n)
+c(Q0 = q0, critico_inferior = qchisq(0.025, 2 * n), critico_superior = qchisq(0.975, 2 * n),
+  p_valor_exacto = 2 * min(cola_inferior, 1 - cola_inferior))
+```
+
+**Con un mes de datos no se rechaza $H_0$.** El valor p dice qué tan raro sería un resultado al menos así de alejado de 30 si la frase fuera cierta, y no es raro.
+
+**No rechazar no es aceptar.** No probamos que $\mu = 30$: el intervalo del capítulo 4 también contiene 35 o 38. Simplemente, un mes no tiene información suficiente para descartar el 30. La sección 5.6 mide cuánta información haría falta.
+
+## 5.4 Errores tipo I y II
+
+Toda prueba puede equivocarse de dos maneras:
+
+| | $H_0$ es cierta ($\mu = 30$) | $H_0$ es falsa |
+|---|---|---|
+| **Rechazamos $H_0$** | Error tipo I (probabilidad $\alpha$) | Correcto (potencia) |
+| **No rechazamos $H_0$** | Correcto | Error tipo II (probabilidad $\beta$) |
+
+En nuestro caso, un error tipo I sería desmentir la frase cuando es cierta; un error tipo II, no darnos cuenta de que es falsa. El nivel $\alpha = 0.05$ controla el primero; el segundo depende del valor verdadero de $\mu$ y del tamaño de muestra.
+
+## 5.5 Lema de Neyman y Pearson
+
+Comparemos dos hipótesis **simples**: $H_0: \mu = 30$ contra $H_1: \mu = \mu_1$, con $\mu_1 > 30$. El **lema de Neyman-Pearson** dice que, entre todas las pruebas de nivel $\alpha$, la más potente rechaza cuando el cociente de verosimilitudes es grande:
+
+$$
+\frac{L(\mu_1)}{L(30)} = \left(\frac{30}{\mu_1}\right)^n \exp\left[\left(\frac{1}{30} - \frac{1}{\mu_1}\right)\sum x_i\right] > k.
+$$
+
+Como $1/30 - 1/\mu_1 > 0$, el cociente crece con $\sum x_i$, y la región crítica más potente es $\sum x_i > c$, es decir, $Q_0 > \chi^2_{2n,\,1-\alpha}$.
+
+```{r}
+c(Q0 = q0, critico_una_cola = qchisq(0.95, 2 * n), p_valor_una_cola = 1 - cola_inferior)
+```
+
+## 5.6 Función potencia
+
+La **función potencia** $\pi(\mu)$ es la probabilidad de rechazar $H_0$ cuando el valor verdadero es $\mu$. Para la prueba de dos colas es exacta:
+
+$$
+\pi(\mu) = P\left(\chi^2_{2n} < \frac{30}{\mu}\chi^2_{2n,\,\alpha/2}\right) + P\left(\chi^2_{2n} > \frac{30}{\mu}\chi^2_{2n,\,1-\alpha/2}\right).
+$$
+
+```{r}
+potencia <- function(mu, k, alfa = 0.05) {
+  pchisq(30 / mu * qchisq(alfa / 2, 2 * k), 2 * k) + 1 - pchisq(30 / mu * qchisq(1 - alfa / 2, 2 * k), 2 * k)
+}
+curvas <- expand_grid(mu = seq(20, 45, by = 0.25), k = c(n, 500, 2500)) |>
+  mutate(potencia = potencia(mu, k), muestra = factor(paste("n =", k), paste("n =", c(n, 500, 2500))))
+ggplot(curvas, aes(mu, potencia, colour = muestra)) + geom_line(linewidth = 1) +
+  geom_hline(yintercept = 0.05, linetype = 3) + geom_vline(xintercept = 30, linetype = 2, colour = "grey50") +
+  labs(x = expression("Valor verdadero de" ~ mu ~ "(minutos)"), y = "Probabilidad de rechazar H0", colour = NULL,
+       title = "Función potencia de la prueba de dos colas") +
+  theme(legend.position = "top")
+```
+
+En $\mu = 30$ la potencia es $\alpha = 0.05$. Con un mes ($n$ = `r n`), si la verdad fuera $\mu = 35$ solo la detectaríamos con probabilidad `r round(potencia(35, n), 2)`. Lo comprobamos por simulación:
+
+```{r}
+rechaza <- function(z) { q <- 2 * sum(z) / 30; q < qchisq(0.025, 2 * length(z)) | q > qchisq(0.975, 2 * length(z)) }
+c(nivel_simulado = mean(replicate(10000, rechaza(rexp(n, 1 / 30)))), nivel_teorico = 0.05,
+  potencia_simulada_mu35 = mean(replicate(10000, rechaza(rexp(n, 1 / 35)))), potencia_teorica_mu35 = potencia(35, n))
+```
+
+**¿Cuántos datos hacen falta?** El tamaño de muestra para detectar $\mu = 35$ con potencia de 80%:
+
+```{r}
+n_necesario <- uniroot(function(k) potencia(35, k) - 0.8, c(10, 5000))$root
+c(intervalos_necesarios = ceiling(n_necesario), meses_aproximados = ceiling(n_necesario) / n)
+```
+
+Esto explica el resultado de la sección 5.3: un mes tiene poca potencia. Calcular la potencia **antes** de recolectar datos es lo que se hace al diseñar un estudio, por ejemplo un ensayo clínico.
+
+## 5.7 Pruebas uniformemente más potentes
+
+La región crítica de la sección 5.5, $\sum x_i > c$, **no depende de $\mu_1$**: es la misma para cualquier alternativa $\mu_1 > 30$. Por eso es la más potente contra todas a la vez: es **uniformemente más potente (UMP)** para la hipótesis compuesta $H_1: \mu > 30$. Esto ocurre porque la exponencial tiene **cociente de verosimilitudes monótono** en $T = \sum X_i$, la estadística suficiente del capítulo 3.
+
+Para la alternativa de dos colas $\mu \neq 30$ **no existe** una prueba UMP: la mejor región contra $\mu_1 > 30$ (cola derecha) es la peor contra $\mu_1 < 30$. Para dos colas se usa otro criterio: el cociente de verosimilitudes generalizado.
+
+## 5.8 Prueba del cociente de verosimilitudes
+
+Para hipótesis compuestas, la **prueba del cociente de verosimilitudes** compara el máximo de la verosimilitud bajo $H_0$ con el máximo sin restricciones, que se alcanza en el EMV $\hat\mu = \bar x$:
+
+$$
+\Lambda = \frac{L(30)}{L(\bar x)}, \qquad -2\log\Lambda = 2n\left[\frac{\bar x}{30} - 1 - \log\frac{\bar x}{30}\right].
+$$
+
+Si $\bar x$ está cerca de 30, $\Lambda$ es cercano a 1 y $-2\log\Lambda$ cercano a 0; rechazamos cuando $-2\log\Lambda$ es grande.
+
+## 5.9 Distribución asintótica del cociente de verosimilitudes
+
+Por el **teorema de Wilks**, bajo $H_0$, $-2\log\Lambda \approx \chi^2_1$ (un grado de libertad, porque $H_0$ fija un parámetro).
+
+```{r}
+lrt <- function(z, mu0 = 30) { m <- mean(z); 2 * length(z) * (m / mu0 - 1 - log(m / mu0)) }
+c(menos_2_log_lambda = lrt(x), p_valor = pchisq(lrt(x), 1, lower.tail = FALSE))
+```
+
+Comprobamos la aproximación de Wilks por simulación con $\mu = 30$:
+
+```{r, fig.height = 3.8}
+lrt_sim <- replicate(10000, lrt(rexp(n, 1 / 30)))
+c(media_simulada = mean(lrt_sim), media_chi2_1 = 1, P_rechazo_simulada = mean(lrt_sim > qchisq(0.95, 1)))
+ggplot(data.frame(lrt_sim), aes(lrt_sim)) +
+  geom_histogram(aes(y = after_stat(density)), binwidth = 0.25, boundary = 0, fill = "grey80", colour = "white") +
+  stat_function(fun = dchisq, args = list(df = 1), colour = "#d93025", linewidth = 1, n = 500) +
+  coord_cartesian(xlim = c(0, 8), ylim = c(0, 1.2)) +
+  labs(x = "-2 log Lambda", y = "Densidad", title = "Bajo H0, -2 log Lambda sigue aproximadamente una ji cuadrada de 1 grado")
+```
+
+## Comparación con la prueba t
+
+La prueba t es la que muchos usarían por costumbre. Supone normalidad, y nuestros datos son muy asimétricos; con $n$ grande el teorema del límite central la rescata, pero no aprovecha el modelo.
+
+```{r}
+t.test(x, mu = 30)
+```
+
+Las tres pruebas (exacta, cociente de verosimilitudes y t) llegan a la misma conclusión con marzo. La diferencia está en muestras chicas: comparemos su nivel real con $n = 10$.
+
+```{r}
+nivel <- function(prueba, k = 10, B = 10000) mean(replicate(B, prueba(rexp(k, 1 / 30))))
+c(exacta = nivel(rechaza),
+  cociente_verosimilitudes = nivel(function(z) lrt(z) > qchisq(0.95, 1)),
+  t_student = nivel(function(z) t.test(z, mu = 30)$p.value < 0.05))
+```
+
+La prueba exacta respeta el 5%, y el cociente de verosimilitudes también. La t, que supone normalidad, casi **duplica** el error tipo I con datos tan asimétricos.
+
+**Dualidad entre pruebas e intervalos.** La prueba exacta de dos colas rechaza $\mu = 30$ exactamente cuando el intervalo pivotal del capítulo 4 no contiene el 30. Un intervalo es el conjunto de valores de $\mu$ que una prueba no rechazaría.
+
+## Muestras independientes y muestras pareadas
+
+Muchas preguntas comparan dos grupos. Que las muestras sean independientes o pareadas cambia la prueba.
+
+**Muestras independientes: ¿2023 fue distinto de 2022?** Los meses de un año y los del otro son días distintos: son muestras independientes. Como los meses no tienen todos la misma tasa (capítulo 2), usamos **el mes como unidad** y comparamos la $\mu$ mensual de los dos años con la prueba de Welch:
+
+```{r}
+limpio <- hora_pico(atropellamientos) |> depurar_duplicados() |> filter(fecha < "2024-01-01")
+dias_todo <- seq(as.Date("2022-01-01"), as.Date("2023-12-31"), by = "day")
+dias_todo <- dias_todo[format(dias_todo, "%u") <= "5"]
+meses <- limpio |> count(mes, name = "eventos") |>
+  left_join(tibble(mes = format(dias_todo, "%Y-%m")) |> count(mes, name = "dias"), by = "mes") |>
+  mutate(anio = substr(mes, 1, 4), mu_mes = dias * 180 / eventos)
+meses |> group_by(anio) |> summarise(meses = n(), media_mu_mensual = mean(mu_mes), sd = sd(mu_mes))
+t.test(mu_mes ~ anio, data = meses)
+```
+
+En 2022 el tiempo medio entre atropellamientos fue mayor y más variable entre meses, pero la diferencia no es significativa al 5% (valor p ≈ 0.06): con solo 12 meses por año, la prueba tiene poca potencia. Usamos la versión de Welch porque las desviaciones estándar de los dos años son claramente distintas.
+
+**Muestras pareadas: ¿a las 18 h atropellan más que a las 20 h?** Aquí cada día aporta una observación a cada grupo: el conteo de las 18 h y el de las 20 h **del mismo día**. Las comparaciones correctas usan la **diferencia dentro de cada día**.
+
+```{r}
+por_dia_hora <- tibble(fecha = dias_todo) |>
+  left_join(limpio |> filter(hora_num %in% c(18, 20)) |> count(fecha, hora_num) |>
+              pivot_wider(names_from = hora_num, values_from = n, names_prefix = "h"), by = "fecha") |>
+  mutate(across(c(h18, h20), ~ coalesce(.x, 0L)))
+c(media_18h = mean(por_dia_hora$h18), media_20h = mean(por_dia_hora$h20),
+  correlacion_entre_horas_del_mismo_dia = cor(por_dia_hora$h18, por_dia_hora$h20))
+c(pareada = t.test(por_dia_hora$h18, por_dia_hora$h20, paired = TRUE)$p.value,
+  como_si_fueran_independientes = t.test(por_dia_hora$h18, por_dia_hora$h20)$p.value,
+  wilcoxon_pareada = wilcox.test(por_dia_hora$h18, por_dia_hora$h20, paired = TRUE, exact = FALSE)$p.value)
+```
+
+A las 18 h hay en promedio algo más de atropellamientos que a las 20 h, y la diferencia es significativa al 5% (coincide con la ji cuadrada por hora del capítulo 2). En estos datos la correlación entre las dos horas del mismo día es casi cero, así que la prueba pareada y la de muestras independientes dan casi lo mismo. **Eso no hace correcta la segunda:** cuando las observaciones del mismo día están correlacionadas (por ejemplo, si un día de lluvia aumenta los atropellamientos a todas horas), tratarlas como independientes calcula mal la varianza de la diferencia. Lo que decide la prueba es **el diseño**, no el resultado.
+
+## La respuesta
+
+**Con marzo de 2023** (`r n` intervalos, $\hat\mu$ = `r round(mean(x), 1)` min), no se rechaza $H_0: \mu = 30$ (valor p exacto `r round(2 * min(cola_inferior, 1 - cola_inferior), 2)`). Pero la prueba tenía poca potencia: un mes no alcanza para distinguir 30 de 35 minutos.
+
+**Con 2022-2023.** Como los meses difieren, la prueba no debe suponer una $\mu$ común: usamos el error estándar del **bootstrap por meses** (capítulo 4) para la media del periodo.
+
+```{r}
+mu_periodo <- sum(meses$dias) * 180 / sum(meses$eventos)
+mu_boot <- replicate(10000, { i <- sample(nrow(meses), replace = TRUE); sum(meses$dias[i]) * 180 / sum(meses$eventos[i]) })
+z <- (mu_periodo - 30) / sd(mu_boot)
+c(mu_periodo = mu_periodo, error_estandar_bootstrap = sd(mu_boot), z = z, p_valor = 2 * pnorm(-abs(z)))
+```
+
+**Se rechaza $H_0$ con mucha claridad.** En hora pico de días laborables de 2022-2023, en promedio atropellaron a alguien cada **`r round(mu_periodo)` minutos**, no cada 30. Es decir, unos `r round(60 / mu_periodo, 2)` atropellamientos confirmados por hora en vez de 2: la frase exagera la frecuencia en alrededor de `r round(100 * (mu_periodo / 30 - 1))`%.
+
+**Significancia contra relevancia.** ¿Importa la diferencia? Estadísticamente es clara. En la práctica, "cada media hora" y "cada `r round(mu_periodo)` minutos" transmiten la misma idea: en la Ciudad de México atropellan a alguien con mucha frecuencia. Una prueba responde si la diferencia es real; si es importante lo decide el contexto.
+
+**Lo que este caso enseña sobre las pruebas de hipótesis:**
+
+1. La respuesta depende de **cómo se midió**: medir solo dentro de cada ventana (capítulo 2) habría dado unos 27 minutos y la conclusión contraria, que la frase *se queda corta*.
+2. Depende de **qué población**: cada mes tiene su propia tasa; la respuesta es sobre la media de 2022-2023.
+3. Depende de **cuántos datos**: con un mes no se rechaza; con dos años sí. No rechazar no es confirmar.
+4. Los supuestos de la prueba (independencia, distribución idéntica, $n$ fijo) se **verifican** y, cuando fallan, se corrige el método (bootstrap por meses), no se ignoran.
+
+## Para seguir
+
+Este caso deja preguntas para cursos posteriores: modelar cómo cambia la tasa con la hora y el mes (procesos de Poisson no homogéneos y modelos lineales generalizados), comparar alcaldías (modelos jerárquicos) y estudiar tiempos observados parcialmente (análisis de supervivencia).

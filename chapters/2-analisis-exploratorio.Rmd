@@ -1,0 +1,328 @@
+---
+title: "2. Análisis exploratorio de datos"
+subtitle: "Inferencia Estadística · Caso de estudio: atropellamientos en la CDMX"
+output: html_document
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, fig.width = 8, fig.height = 4.5)
+source("funciones-caso.R")
+```
+
+*Temario: unidad 2 (Inferencia Estadística, clave 1541).*
+
+Antes de usar cualquier modelo hay que conocer los datos: de dónde vienen, qué errores tienen y si el modelo que pensamos usar tiene sentido. Este capítulo toma tres decisiones que el resto del curso da por hechas: **qué reportes contar, en qué horario y con qué modelo.**
+
+```{r}
+atropellamientos <- leer_atropellamientos()
+tipos <- read_csv("datos/tipos_incidente_cdmx.csv", show_col_types = FALSE)
+```
+
+## 2.1 Tablas de frecuencias
+
+**¿Qué reporta el C5?** Los incidentes más frecuentes, con su porcentaje de confirmación:
+
+```{r}
+tipos |>
+  group_by(incidente_c4) |>
+  summarise(reportes = sum(reportes), confirmados = sum(reportes[codigo_cierre == "A"])) |>
+  mutate(pct_confirmados = round(100 * confirmados / reportes, 1)) |>
+  arrange(desc(reportes)) |> head(8) |> knitr::kable()
+```
+
+**Calidad de los datos.** Por cada atropellamiento confirmado hay más reportes duplicados que confirmados: contar reportes sin filtrar exageraría la frecuencia más del doble.
+
+```{r}
+atropellamientos |>
+  count(codigo_cierre) |>
+  mutate(significado = c(A = "confirmado", D = "duplicado", F = "falso", I = "informativo")[codigo_cierre],
+         porcentaje = round(100 * n / sum(n), 1)) |> knitr::kable()
+```
+
+**¿Dónde?** Atropellamientos confirmados por alcaldía (2022-2023):
+
+```{r}
+confirmados <- atropellamientos |> filter(codigo_cierre == "A", fecha < "2024-01-01")
+confirmados |> count(alcaldia, sort = TRUE) |>
+  mutate(porcentaje = round(100 * n / sum(n), 1), acumulado = cumsum(porcentaje)) |> knitr::kable()
+```
+
+## 2.2 Métodos gráficos
+
+**¿Cuándo?** La frecuencia cambia mucho con la hora y el día:
+
+```{r, fig.height = 4}
+confirmados |>
+  count(dia_semana, hora_num) |>
+  mutate(dia_semana = factor(dia_semana, c(LABORABLES, "Sábado", "Domingo"))) |>
+  ggplot(aes(hora_num, dia_semana, fill = n / 104)) +   # ~104 semanas en dos años
+  geom_tile(colour = "white") +
+  scale_fill_gradient(low = "#e8f0fe", high = "#174ea6", name = "Promedio\npor semana") +
+  scale_x_continuous(breaks = seq(0, 23, 3)) +
+  labs(x = "Hora del día", y = NULL, title = "Atropellamientos confirmados por hora y día de la semana")
+```
+
+Esta gráfica tiene una consecuencia para el modelo. Un proceso de Poisson **homogéneo**, cuyos tiempos entre eventos son exponenciales, supone una tasa constante. A lo largo del día la tasa no es constante, así que no esperamos tiempos exponenciales en el día completo. Dentro de una ventana de pocas horas, la tasa sí es aproximadamente constante. Por eso trabajamos en una ventana fija: **días laborables de 18:00 a 21:00**.
+
+**La serie mensual** varía de un mes a otro, sin una tendencia marcada en los dos años. Si esa variación es solo azar o si hay meses con tasas realmente distintas, lo probamos más abajo, en la verificación de supuestos.
+
+```{r, fig.height = 3.8}
+confirmados |> count(mes) |>
+  ggplot(aes(as.Date(paste0(mes, "-01")), n)) + geom_line(colour = "#1a73e8") + geom_point(colour = "#1a73e8") +
+  expand_limits(y = 0) +
+  labs(x = NULL, y = "Atropellamientos confirmados", title = "Atropellamientos confirmados por mes")
+```
+
+## ¿Es razonable el modelo exponencial?
+
+Comparamos los tiempos entre atropellamientos en el **día completo** (todas las horas de todos los días) y en la **ventana de hora pico**, medidos con el reloj de hora pico (más abajo explicamos por qué):
+
+```{r}
+dia_completo <- tiempos_entre(confirmados, "2022-01-01", "2023-12-31", inicio = 0, fin = 24, laborables = FALSE)
+ventana      <- tiempos_entre(hora_pico(confirmados), "2022-01-01", "2023-12-31")
+
+resumen <- function(x) c(n = length(x), media = mean(x), sd = sd(x), CV = sd(x) / mean(x))
+round(rbind(dia_completo = resumen(dia_completo), hora_pico = resumen(ventana)), 2)
+```
+
+En una exponencial la desviación estándar es igual a la media, así que su **coeficiente de variación es 1**. En la ventana de hora pico el CV es muy cercano a 1; en el día completo es mayor, porque mezclamos horas con tasas distintas.
+
+```{r}
+grafica <- function(x, titulo) {
+  ggplot(data.frame(x), aes(x)) +
+    geom_histogram(aes(y = after_stat(density)), binwidth = 5, boundary = 0, fill = "grey80", colour = "white") +
+    stat_function(fun = dexp, args = list(rate = 1 / mean(x)), colour = "#d93025", linewidth = 1) +
+    coord_cartesian(xlim = c(0, 200)) +
+    labs(x = "Minutos entre atropellamientos", y = "Densidad", title = titulo,
+         subtitle = "Línea roja: exponencial con la misma media")
+}
+grafica(ventana, "Hora pico de días laborables (2022-2023)")
+```
+
+**Gráfica cuantil-cuantil.** Si los datos son exponenciales, los puntos siguen la recta.
+
+```{r, fig.height = 4.2}
+qq <- function(x, etiqueta) {
+  n <- length(x)
+  tibble(teorico = qexp(ppoints(n), rate = 1 / mean(x)), observado = sort(x), datos = etiqueta)
+}
+bind_rows(qq(dia_completo, "Día completo"), qq(ventana, "Hora pico")) |>
+  ggplot(aes(teorico, observado)) + geom_abline(colour = "grey50") +
+  geom_point(alpha = 0.3, size = 0.8, colour = "#1a73e8") + facet_wrap(~ datos, scales = "free") +
+  labs(x = "Cuantiles de la exponencial", y = "Cuantiles observados", title = "Gráficas cuantil-cuantil contra la exponencial")
+```
+
+**Los conteos.** Si los tiempos son exponenciales, el número de atropellamientos por ventana es Poisson, y en una Poisson la media es igual a la varianza. Contamos también los días sin atropellamientos:
+
+```{r}
+dias <- tibble(fecha = seq(as.Date("2022-01-01"), as.Date("2023-12-31"), by = "day")) |>
+  filter(format(fecha, "%u") <= "5")                       # días laborables
+conteo_dia <- dias |> left_join(hora_pico(confirmados) |> count(fecha), by = "fecha") |>
+  mutate(n = coalesce(n, 0L))
+c(media = mean(conteo_dia$n), varianza = var(conteo_dia$n))
+```
+
+## Verificación de supuestos: ¿tenemos una muestra aleatoria?
+
+Todo lo que sigue en el curso (la distribución de $\bar X$, el estimador de máxima verosimilitud, los intervalos y las pruebas) supone una **muestra aleatoria**: observaciones **independientes** e **idénticamente distribuidas**. Ver que el histograma "se parece" a una exponencial no basta; hay que revisar cada parte del supuesto y también **cómo se obtuvieron los datos**.
+
+### Independencia entre días
+
+Si los días fueran dependientes (un día con muchos atropellamientos seguido de otro igual), los conteos diarios estarían autocorrelacionados.
+
+```{r}
+acf(conteo_dia$n, lag.max = 10, main = "Autocorrelación de los conteos diarios en hora pico")
+```
+
+Todas las autocorrelaciones quedan dentro de las bandas: los días se comportan como independientes. Además, bajo un modelo Poisson el **índice de dispersión** $D = \sum (n_i - \bar n)^2 / \bar n$ sigue aproximadamente una $\chi^2_{k-1}$:
+
+```{r}
+k <- nrow(conteo_dia)
+D <- sum((conteo_dia$n - mean(conteo_dia$n))^2) / mean(conteo_dia$n)
+c(D = D, gl = k - 1, p = pchisq(D, k - 1, lower.tail = FALSE))
+```
+
+### Cómo medir el tiempo cuando solo observamos ventanas
+
+Solo observamos la ciudad de 18:00 a 21:00. Lo más natural parece medir los intervalos **dentro de cada ventana**: del primer atropellamiento al segundo, del segundo al tercero, y así hasta el último del día. Pero eso **descarta** el tiempo de las 18:00 al primer atropellamiento y el del último a las 21:00, y los intervalos largos son justo los que más probablemente quedan cortados por la ventana. El resultado subestima $\mu$.
+
+Lo comprobamos con un proceso de Poisson simulado, del que conocemos la verdad ($\mu = 35$ minutos):
+
+```{r}
+set.seed(2026)
+mu_verdadera <- 35
+eventos_sim <- lapply(1:5000, function(i) sort(runif(rpois(1, 180 / mu_verdadera), 0, 180)))
+dentro <- unlist(lapply(eventos_sim, diff))                                    # solo dentro de cada ventana
+cosido <- diff(unlist(lapply(seq_along(eventos_sim), function(i) (i - 1) * 180 + eventos_sim[[i]])))
+round(rbind(dentro_de_cada_ventana = resumen(dentro), reloj_de_hora_pico = resumen(cosido)), 2)
+```
+
+Medir dentro de cada ventana da una media bastante menor que la verdadera, **y aun así el CV sale cercano a 1**: los datos sesgados *parecen* exponenciales. Ni el histograma ni la gráfica cuantil-cuantil ni la prueba de bondad de ajuste detectan este sesgo; solo se descubre pensando en cómo se observaron los datos.
+
+**La solución: el reloj de hora pico.** Por la **pérdida de memoria** de la exponencial, si a las 21:00 llevamos un rato sin atropellamientos, el tiempo que falta para el siguiente no depende de cuánto llevamos esperando. Si la hora pico de cada día laborable es "la misma" (lo revisamos más abajo), podemos continuar el reloj a las 18:00 del día siguiente, como si las ventanas fueran un solo periodo continuo. Con ese reloj, los intervalos de un proceso de Poisson son exponenciales e independientes exactamente (segunda fila de la tabla). La función `tiempos_entre()` mide así. En los datos reales la diferencia es grande:
+
+```{r}
+c(dentro_de_cada_ventana = mean(tiempos_dentro_de_ventana(hora_pico(confirmados))),
+  reloj_de_hora_pico = mean(ventana),
+  tiempo_observado_entre_eventos = k * 180 / nrow(hora_pico(confirmados)))
+```
+
+La tercera cifra, el tiempo total observado entre el número de atropellamientos, coincide con el reloj de hora pico: es otra forma de ver que esa medición no pierde tiempo.
+
+### Intervalos demasiado cortos: atropellamientos confirmados dos veces
+
+Hay más intervalos de menos de un minuto de los que predice la exponencial:
+
+```{r}
+c(observado = mean(ventana < 1), exponencial = pexp(1, rate = 1 / mean(ventana)))
+```
+
+Si dos atropellamientos ocurren a pocos minutos, por azar deberían estar en cualquier parte de la ciudad. Medimos la distancia entre reportes consecutivos del mismo día separados por menos de 10 minutos:
+
+```{r}
+con_distancia <- hora_pico(confirmados) |> arrange(momento) |> group_by(fecha) |>
+  mutate(minutos = as.numeric(momento - lag(momento), units = "mins"),
+         metros = 111000 * sqrt((latitud - lag(latitud))^2 +
+                                  (cos(latitud * pi / 180) * (longitud - lag(longitud)))^2)) |>
+  ungroup() |> filter(!is.na(minutos))
+cercanos <- con_distancia |> filter(minutos < 10)
+c(consecutivos_menos_de_10_min = nrow(cercanos),
+  de_ellos_a_menos_de_500_m = mean(cercanos$metros < 500, na.rm = TRUE))
+
+# Proporción esperada si los lugares fueran independientes: dos reportes al azar
+set.seed(1)
+i <- sample(nrow(con_distancia), 20000, TRUE); j <- sample(nrow(con_distancia), 20000, TRUE)
+mean(111000 * sqrt((con_distancia$latitud[i] - con_distancia$latitud[j])^2 +
+       (cos(con_distancia$latitud[i] * pi / 180) * (con_distancia$longitud[i] - con_distancia$longitud[j]))^2) < 500,
+     na.rm = TRUE)
+```
+
+Entre los reportes muy cercanos en el tiempo, la proporción a menos de 500 metros es decenas de veces mayor que la esperada por azar: son el **mismo atropellamiento confirmado con dos folios**. Los quitamos con `depurar_duplicados()` (menos de 10 minutos y menos de 500 metros):
+
+```{r}
+hora_pico_limpia <- hora_pico(confirmados) |> depurar_duplicados()
+c(eventos_antes = nrow(hora_pico(confirmados)), eventos_despues = nrow(hora_pico_limpia))
+x_limpio <- tiempos_entre(hora_pico_limpia, "2022-01-01", "2023-12-31")
+c(observado = mean(x_limpio < 1), exponencial = pexp(1, rate = 1 / mean(x_limpio)))
+```
+
+### Independencia entre intervalos consecutivos
+
+¿Un intervalo corto suele ir seguido de otro corto (o de uno largo)? Comparamos cada intervalo con el anterior:
+
+```{r}
+cor.test(x_limpio[-1], x_limpio[-length(x_limpio)], method = "spearman", exact = FALSE)
+acf(x_limpio, lag.max = 10, main = "Autocorrelación de los intervalos (reloj de hora pico, depurados)")
+```
+
+No hay evidencia de dependencia entre intervalos consecutivos.
+
+### ¿Idénticamente distribuidas? La tasa dentro de la ventana
+
+Si la tasa fuera constante, los atropellamientos se repartirían por igual entre las tres horas de la ventana y entre los cinco días laborables. (En 2022-2023 cada día laborable aparece exactamente 104 veces, así que bajo la hipótesis las frecuencias esperadas son iguales.)
+
+```{r}
+por_hora <- hora_pico_limpia |> count(hora_num)
+por_hora; chisq.test(por_hora$n)
+por_dia <- hora_pico_limpia |> count(dia_semana)
+por_dia; chisq.test(por_dia$n)
+```
+
+Con dos años de datos se detectan diferencias pequeñas: la tasa baja un poco a las 20 h (diferencia significativa al 5%), y los viernes hay algo más de atropellamientos, aunque esa diferencia queda justo en el límite de la significancia. **Significancia estadística no es lo mismo que relevancia práctica**: las diferencias son de alrededor de 10% respecto al promedio, y con más de dos mil eventos diferencias así de pequeñas ya pueden resultar significativas. Dentro de la ventana, el supuesto de distribución idéntica es una aproximación razonable.
+
+**Días festivos.** Algunos días laborables son festivos o jueves y viernes santos. ¿Cambia la tasa esos días?
+
+```{r}
+festivos <- as.Date(c("2022-02-07", "2022-03-21", "2022-04-14", "2022-04-15", "2022-09-16", "2022-11-21",
+                      "2023-02-06", "2023-03-20", "2023-04-06", "2023-04-07", "2023-05-01", "2023-11-20", "2023-12-25"))
+conteo_limpio <- dias |> left_join(hora_pico_limpia |> count(fecha), by = "fecha") |>
+  mutate(n = coalesce(n, 0L), festivo = fecha %in% festivos, mes = format(fecha, "%Y-%m"))
+conteo_limpio |> group_by(festivo) |> summarise(dias = n(), atropellamientos_por_dia = mean(n))
+```
+
+Son solo 13 días y su promedio es parecido al de los demás: no hace falta quitarlos.
+
+**¿Todos los meses tienen la misma tasa?** Este es el supuesto más delicado: el capítulo 4 junta los dos años para dar una respuesta más precisa. Si la tasa fuera la misma todo el tiempo, el número de atropellamientos de cada mes sería Poisson, con media proporcional a sus días laborables. Lo probamos con una ji cuadrada de homogeneidad:
+
+```{r}
+por_mes <- conteo_limpio |> group_by(mes) |> summarise(atropellamientos = sum(n), dias = n()) |>
+  mutate(esperados = sum(atropellamientos) * dias / sum(dias), mu_del_mes = dias * 180 / atropellamientos)
+X2 <- sum((por_mes$atropellamientos - por_mes$esperados)^2 / por_mes$esperados)
+c(X2 = X2, gl = nrow(por_mes) - 1, p = pchisq(X2, nrow(por_mes) - 1, lower.tail = FALSE))
+range(por_mes$mu_del_mes)
+```
+
+**Se rechaza la homogeneidad.** La $\mu$ de cada mes va aproximadamente de `r round(min(por_mes$mu_del_mes))` a `r round(max(por_mes$mu_del_mes))` minutos, más de lo que explicaría el azar. El índice de dispersión de los conteos diarios no lo había detectado: compara cada día contra el promedio de los dos años, y una diferencia entre meses se diluye entre 520 días. Es un buen ejemplo de que **no rechazar una prueba no demuestra el supuesto**; depende de la potencia de la prueba contra la desviación que nos importa.
+
+Consecuencias para el resto del curso:
+
+- **Dentro de un mes** nada indica que la tasa cambie (en el capítulo 4 vemos que en marzo los conteos diarios varían incluso menos que una Poisson), así que la muestra de marzo sí puede tratarse como muestra aleatoria. Pero su $\mu$ es la de *marzo de 2023*, no la de "cualquier hora pico".
+- **Al juntar los dos años**, $\mu$ debe entenderse como la **tasa promedio** del periodo, y su incertidumbre hay que calcularla sin suponer que todos los meses son iguales. En el capítulo 4 lo hacemos con un bootstrap por meses.
+
+**Muestras independientes o dependientes.** Comparar dos meses distintos es comparar **muestras independientes**: son días distintos. Comparar las 18 h contra las 20 h *de los mismos días* es comparar **muestras dependientes (pareadas)**: cada día aporta una observación a cada grupo, y un día con mucho tráfico afecta a ambas. La prueba correcta cambia según el caso (pareada o de dos muestras), y confundirlas es uno de los errores más comunes.
+
+### Bondad de ajuste a la exponencial: cuidado con estimar la media
+
+La prueba de Kolmogorov-Smirnov supone que la media de la exponencial es **conocida**. Si la estimamos con los mismos datos, la exponencial ajustada queda "más cerca" de los datos de lo que estaría la verdadera, y el valor p sale demasiado grande. La corrección (en el espíritu de la prueba de Lilliefors) es simular la distribución del estadístico estimando la media en cada simulación:
+
+```{r}
+ks_con_media_estimada <- function(z, B = 1000) {
+  z <- z + runif(length(z), 0, 1 / 60)                 # deshace empates por redondeo al segundo
+  d_obs <- ks.test(z, "pexp", rate = 1 / mean(z))$statistic
+  d_sim <- replicate(B, { y <- rexp(length(z), 1 / mean(z)); ks.test(y, "pexp", rate = 1 / mean(y))$statistic })
+  c(D = unname(d_obs),
+    p_ingenuo = suppressWarnings(ks.test(z, "pexp", rate = 1 / mean(z))$p.value),
+    p_corregido = mean(d_sim >= d_obs))
+}
+set.seed(7)
+round(rbind(con_duplicados = ks_con_media_estimada(ventana, 300),
+            depurado = ks_con_media_estimada(x_limpio, 300)), 3)
+```
+
+Con los duplicados, la exponencial se rechaza: los intervalos casi nulos no son compatibles con ella. Depurados, el ajuste es bueno. Observa también que el valor p ingenuo es mayor que el corregido: es demasiado complaciente.
+
+## 2.3 Medidas descriptivas: la muestra del curso (marzo de 2023)
+
+```{r}
+x <- muestra_curso(atropellamientos)
+n <- length(x)
+c(n = n, media = mean(x), mediana = median(x), desviacion_estandar = sd(x),
+  CV = sd(x) / mean(x), rango_intercuartilico = IQR(x), minimo = min(x), maximo = max(x))
+quantile(x, c(0.1, 0.25, 0.5, 0.75, 0.9))
+```
+
+La mediana es menor que la media: la distribución es asimétrica a la derecha, como corresponde a una exponencial (cuya mediana es $\mu \ln 2 \approx 0.69\mu$).
+
+## 2.4 Medidas descriptivas para datos agrupados
+
+Si solo tuviéramos una tabla de frecuencias por clases (como a veces se publican los datos), calcularíamos las medidas con las marcas de clase $m_i$ y frecuencias $f_i$:
+
+$$
+\bar x \approx \frac{\sum_i f_i m_i}{n}, \qquad s^2 \approx \frac{\sum_i f_i (m_i - \bar x)^2}{n - 1}.
+$$
+
+```{r}
+clases <- cut(x, breaks = seq(0, 10 * ceiling(max(x) / 10), by = 10), right = FALSE)
+tabla <- as.data.frame(table(clases), responseName = "f") |>
+  mutate(marca = seq(5, by = 10, length.out = n()),
+         f_relativa = round(f / n, 3), f_acumulada = cumsum(f))
+knitr::kable(tabla)
+
+media_agrupada <- sum(tabla$f * tabla$marca) / n
+var_agrupada <- sum(tabla$f * (tabla$marca - media_agrupada)^2) / (n - 1)
+round(rbind(sin_agrupar = c(media = mean(x), sd = sd(x)),
+            agrupados   = c(media = media_agrupada, sd = sqrt(var_agrupada))), 2)
+```
+
+Agrupar pierde información, pero con clases de 10 minutos el error es pequeño.
+
+## Decisiones para el resto del curso
+
+1. Contamos solo **atropellamientos confirmados**, y quitamos los **casi duplicados** (el mismo hecho con dos folios).
+2. Trabajamos en una **ventana con tasa aproximadamente constante**: días laborables de 18:00 a 21:00.
+3. Medimos el tiempo con el **reloj de hora pico**, que no descarta el tiempo al inicio y al final de cada ventana. Medir solo dentro de cada ventana subestima $\mu$, y el sesgo no aparece en ninguna prueba de forma.
+4. Con esas decisiones, los días y los intervalos se comportan como **independientes** y el **modelo exponencial** (Poisson para los conteos) es razonable: CV ≈ 1, la gráfica cuantil-cuantil sigue la recta, los conteos tienen media cercana a su varianza y la prueba de bondad de ajuste corregida no lo rechaza.
+5. La tasa varía alrededor de 10% entre horas y días: la distribución idéntica es una aproximación que tendremos presente al interpretar.
+6. **Los meses no tienen todos la misma tasa.** Cada mes puede tratarse como una muestra aleatoria con su propia $\mu$; al juntar meses, $\mu$ es la tasa promedio y su incertidumbre se calcula con un bootstrap por meses (capítulo 4).
+
+Con el modelo justificado, el capítulo 3 construye el mejor estimador de $\mu$.

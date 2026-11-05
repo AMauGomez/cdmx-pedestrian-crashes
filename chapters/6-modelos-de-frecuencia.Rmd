@@ -1,0 +1,224 @@
+---
+title: "6. Más allá del curso: modelos de frecuencia"
+subtitle: "Inferencia Estadística · Caso de estudio: atropellamientos en la CDMX"
+output: html_document
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, fig.width = 8, fig.height = 4.5)
+source("funciones-caso.R")
+set.seed(2026)
+```
+
+*Este capítulo va más allá del temario de Inferencia: usa modelos lineales generalizados, que se estudian en Modelos No Paramétricos y de Regresión.*
+
+En los capítulos 0 a 5 respondimos la pregunta restringiéndonos a una ventana donde la tasa es casi constante. Pero en el camino aparecieron preguntas que esa estrategia no contesta: la tasa cambia con la hora, con el día y con el mes (capítulo 2). En lugar de evitar esa variación, ahora la **modelamos**.
+
+El modelo es el mismo que usan las aseguradoras para la **frecuencia de siniestros**: un modelo lineal generalizado (GLM) Poisson con **exposición**. Si en la celda $i$ (una hora de un día, o una alcaldía en un mes) observamos $N_i$ eventos durante una exposición $e_i$,
+
+$$
+N_i \sim \text{Poisson}(\lambda_i e_i), \qquad \log \lambda_i = \beta_0 + \beta_1 x_{i1} + \dots + \beta_p x_{ip}.
+$$
+
+El término $\log e_i$ entra al modelo con coeficiente fijo igual a 1 (un *offset*), y cada $e^{\beta_j}$ es una **razón de tasas**: cuántas veces más frecuentes son los atropellamientos cuando cambia $x_j$, con lo demás fijo.
+
+```{r}
+atropellamientos <- leer_atropellamientos()
+confirmados <- atropellamientos |> filter(codigo_cierre == "A") |> depurar_duplicados()
+entrenamiento <- confirmados |> filter(fecha < "2024-01-01")          # 2022-2023
+prueba        <- confirmados |> filter(fecha >= "2024-01-01")         # enero y febrero de 2024
+c(eventos_2022_2023 = nrow(entrenamiento), eventos_ene_feb_2024 = nrow(prueba))
+```
+
+Usamos **todas las horas de todos los días**, y guardamos enero y febrero de 2024 para validar el modelo con datos que no vio.
+
+## 6.1 ¿Cuándo? Hora, día de la semana y mes
+
+Cada celda es una hora de un día de 2022-2023 (exposición: una hora, la misma en todas, así que no hace falta el *offset*).
+
+```{r}
+celdas <- expand_grid(fecha = seq(as.Date("2022-01-01"), as.Date("2023-12-31"), by = "day"), hora_num = 0:23) |>
+  left_join(entrenamiento |> mutate(fecha = as.Date(fecha)) |> count(fecha, hora_num), by = c("fecha", "hora_num")) |>
+  mutate(n = coalesce(n, 0L), hora = factor(hora_num),
+         dia = factor(format(fecha, "%u"), 1:7, c("lun", "mar", "mié", "jue", "vie", "sáb", "dom")),
+         mes = factor(format(fecha, "%m")), anio = factor(format(fecha, "%Y")))
+c(celdas = nrow(celdas), media = mean(celdas$n), varianza = var(celdas$n))
+
+poisson_t <- glm(n ~ hora + dia + mes + anio, family = poisson, data = celdas)
+```
+
+**Verificación de supuestos: sobredispersión.** El modelo Poisson supone que la varianza es igual a la media *dentro de cada celda*. El estadístico de Pearson entre sus grados de libertad debe ser cercano a 1:
+
+```{r}
+dispersion <- function(m) sum(residuals(m, type = "pearson")^2) / df.residual(m)
+binneg_t <- MASS::glm.nb(n ~ hora + dia + mes + anio, data = celdas)
+c(dispersion_poisson = dispersion(poisson_t), theta_binomial_negativa = binneg_t$theta,
+  AIC_poisson = AIC(poisson_t), AIC_binomial_negativa = AIC(binneg_t))
+```
+
+Hay una sobredispersión moderada: la binomial negativa, que permite $\operatorname{Var}(N) = \mu + \mu^2/\theta$, ajusta mejor. Los coeficientes de ambos modelos son prácticamente iguales; lo que cambia es la incertidumbre, que la binomial negativa no subestima. Usamos la binomial negativa.
+
+**¿Reproduce el modelo la distribución de los conteos?** Comparamos cuántas celdas tienen 0, 1, 2, ... atropellamientos con lo que predice cada modelo:
+
+```{r}
+esperado <- function(m, k, nb = FALSE) {
+  mu <- fitted(m)
+  sapply(k, function(j) sum(if (nb) dnbinom(j, size = m$theta, mu = mu) else dpois(j, mu)))
+}
+k <- 0:6
+tibble(atropellamientos_en_la_hora = k, observado = sapply(k, function(j) sum(celdas$n == j)),
+       poisson = round(esperado(poisson_t, k)), binomial_negativa = round(esperado(binneg_t, k, nb = TRUE)))
+```
+
+**Razones de tasas por hora**, con intervalos de confianza de 95% (tomando la medianoche como referencia):
+
+```{r, fig.height = 4}
+razones <- function(m, prefijo) {
+  ic <- confint.default(m)
+  tibble(termino = names(coef(m)), rr = exp(coef(m)), inf = exp(ic[, 1]), sup = exp(ic[, 2])) |>
+    filter(startsWith(termino, prefijo)) |> mutate(nivel = sub(prefijo, "", termino))
+}
+razones(binneg_t, "hora") |> mutate(hora = as.integer(nivel)) |>
+  ggplot(aes(hora, rr)) +
+  annotate("rect", xmin = 17.5, xmax = 20.5, ymin = -Inf, ymax = Inf, fill = "#e8f0fe") +
+  geom_pointrange(aes(ymin = inf, ymax = sup), colour = "#1a73e8") +
+  geom_hline(yintercept = 1, linetype = 2) + scale_x_continuous(breaks = seq(0, 23, 2)) +
+  labs(x = "Hora del día", y = "Razón de tasas contra las 0 h",
+       title = "Tasa de atropellamientos por hora (binomial negativa, 2022-2023)",
+       subtitle = "Zona sombreada: la ventana de 18 a 21 h de los capítulos 0 a 5")
+```
+
+```{r}
+bind_rows(razones(binneg_t, "dia") |> mutate(efecto = "día (contra lunes)"),
+          razones(binneg_t, "mes") |> mutate(efecto = "mes (contra enero)"),
+          razones(binneg_t, "anio") |> mutate(efecto = "año (contra 2022)")) |>
+  transmute(efecto, nivel, razon_de_tasas = round(rr, 2), inferior = round(inf, 2), superior = round(sup, 2)) |>
+  knitr::kable()
+```
+
+Lo que dice el modelo:
+
+- **La hora es, con mucho, el efecto más grande.** La tasa más alta no está en la ventana de 18 a 21 h, sino **a primera hora de la tarde**. La ventana del curso se eligió por tener una tasa estable, no por ser la más peligrosa.
+- **El día de la semana importa poco:** el viernes tiene la tasa más alta y el domingo la más baja, con diferencias de 10 a 15% respecto al lunes.
+- **Hay estacionalidad:** el otoño (septiembre a diciembre) es la temporada más alta. Enero sale como el mes más tranquilo, pero con cautela: enero y febrero de 2022 fueron atípicamente bajos (lo vemos en la sección 6.4).
+- 2023 y 2022 son muy parecidos.
+
+## 6.2 ¿La estacionalidad explica la heterogeneidad del capítulo 2?
+
+En el capítulo 2 rechazamos que todos los meses tuvieran la misma tasa en la hora pico. Si esa diferencia es **estacional** (el mismo patrón cada año), un modelo con mes del año debería absorberla. Lo probamos con los conteos de hora pico por mes: comparamos el modelo con mes del año y año contra uno con un efecto distinto para cada uno de los 24 meses.
+
+```{r}
+dias_laborables <- tibble(fecha = seq(as.Date("2022-01-01"), as.Date("2023-12-31"), by = "day")) |>
+  filter(format(fecha, "%u") <= "5") |> count(mes = format(fecha, "%Y-%m"), name = "dias")
+pico_mes <- hora_pico(entrenamiento) |> count(mes, name = "n") |> left_join(dias_laborables, by = "mes") |>
+  mutate(mes_del_anio = factor(substr(mes, 6, 7)), anio = factor(substr(mes, 1, 4)), exposicion = dias * 3)
+constante  <- glm(n ~ offset(log(exposicion)), family = poisson, data = pico_mes)
+estacional <- glm(n ~ mes_del_anio + anio + offset(log(exposicion)), family = poisson, data = pico_mes)
+c(desviacion_tasa_constante = deviance(constante), gl = df.residual(constante),
+  p = pchisq(deviance(constante), df.residual(constante), lower.tail = FALSE))
+c(desviacion_estacional = deviance(estacional), gl = df.residual(estacional),
+  p = pchisq(deviance(estacional), df.residual(estacional), lower.tail = FALSE))
+```
+
+Con una tasa constante, la desviación es demasiado grande para sus grados de libertad: es la heterogeneidad que encontramos en el capítulo 2. Con mes del año y año, el ajuste es bueno. **La heterogeneidad entre meses es, sobre todo, estacionalidad**: un patrón que se repite de un año a otro. Esto no cambia la respuesta del capítulo 5, pero la precisa: los 37 minutos son la media de 2022-2023, que promedia temporadas más y menos intensas.
+
+## 6.3 ¿Dónde? Alcaldías y el problema de la exposición
+
+Para comparar alcaldías hay que dividir entre algo: Iztapalapa tiene muchos atropellamientos, pero también 1.8 millones de habitantes. En seguros, esa medida del tamaño del riesgo es la **exposición**. Usamos la población del Censo 2020 (INEGI) y modelamos cada alcaldía en cada mes, con exposición igual a población × días del mes:
+
+```{r}
+poblacion <- read_csv("datos/poblacion_alcaldias_2020.csv", show_col_types = FALSE)
+dias_mes <- tibble(fecha = seq(as.Date("2022-01-01"), as.Date("2023-12-31"), by = "day")) |>
+  count(mes = format(fecha, "%Y-%m"), name = "dias")
+por_alcaldia <- expand_grid(alcaldia = poblacion$alcaldia, mes = dias_mes$mes) |>
+  left_join(entrenamiento |> count(alcaldia, mes), by = c("alcaldia", "mes")) |>
+  left_join(dias_mes, by = "mes") |> left_join(poblacion, by = "alcaldia") |>
+  mutate(n = coalesce(n, 0L), mes_del_anio = factor(substr(mes, 6, 7)),
+         exposicion = poblacion_2020 * dias / 365.25 / 1e5,           # 100 mil habitantes-año
+         alcaldia = relevel(factor(alcaldia), "Iztapalapa"))
+c(eventos_con_alcaldia = sum(por_alcaldia$n), sin_alcaldia_registrada = sum(is.na(entrenamiento$alcaldia)))
+
+espacial <- MASS::glm.nb(n ~ alcaldia + mes_del_anio + offset(log(exposicion)), data = por_alcaldia)
+c(dispersion_poisson = dispersion(glm(n ~ alcaldia + mes_del_anio + offset(log(exposicion)), family = poisson, data = por_alcaldia)),
+  theta = espacial$theta)
+```
+
+Tasa anual por cada 100 mil habitantes, con su intervalo de 95%:
+
+```{r, fig.height = 5}
+tasas <- por_alcaldia |> group_by(alcaldia) |> summarise(n = sum(n), exposicion = sum(exposicion)) |>
+  mutate(tasa = n / exposicion,
+         inf = qchisq(0.025, 2 * n) / 2 / exposicion, sup = qchisq(0.975, 2 * n + 2) / 2 / exposicion)
+tasa_ciudad <- sum(tasas$n) / sum(tasas$exposicion)
+ggplot(tasas, aes(tasa, reorder(alcaldia, tasa))) +
+  geom_vline(xintercept = tasa_ciudad, linetype = 2, colour = "grey40") +
+  geom_pointrange(aes(xmin = inf, xmax = sup), colour = "#1a73e8") +
+  labs(x = "Atropellamientos confirmados por cada 100 mil habitantes al año", y = NULL,
+       title = "Tasa por alcaldía (2022-2023), con exposición = población residente",
+       subtitle = sprintf("Línea punteada: toda la ciudad (%.0f)", tasa_ciudad))
+```
+
+En toda la ciudad hay unos `r round(tasa_ciudad)` atropellamientos confirmados por cada 100 mil habitantes al año. (Son solo los que llegan al C5 y se confirman; el total real es mayor.) La sobredispersión entre alcaldías y meses es pequeña.
+
+**Cuauhtémoc tiene la tasa más alta**, unas `r round(tasas$tasa[tasas$alcaldia == "Cuauhtémoc"] / tasas$tasa[tasas$alcaldia == "Iztapalapa"], 1)` veces la de Iztapalapa. ¿Es la alcaldía más peligrosa para caminar? **No necesariamente.** La exposición que usamos es la población que *vive* ahí, pero en Cuauhtémoc caminan todos los días cientos de miles de personas que trabajan, estudian o pasan por ahí sin vivir ahí. Lo mismo ocurre, en menor medida, en Benito Juárez, Miguel Hidalgo y Venustiano Carranza. Una tasa por residente solo mediría el riesgo de caminar si los peatones fueran los residentes.
+
+Esta es la decisión más importante de cualquier modelo de frecuencia: **qué se usa como exposición**. En seguros de autos es la misma discusión: ¿la exposición es el número de autos asegurados o los kilómetros que recorren? Un mal denominador produce una tarifa precisa para el riesgo equivocado. Para medir el riesgo de caminar en cada alcaldía necesitaríamos la población que de verdad transita ahí (por ejemplo, de la Encuesta Origen-Destino), no la residente.
+
+## 6.4 Validación fuera de muestra: enero y febrero de 2024
+
+Un modelo que solo se evalúa con los datos con que se ajustó puede verse mejor de lo que es. Predecimos los atropellamientos de **enero y febrero de 2024** en cada alcaldía, datos que el modelo nunca vio, con intervalos de predicción de 90%. Los intervalos combinan la variabilidad binomial negativa de los conteos con la incertidumbre de los coeficientes (simulando coeficientes de su distribución normal aproximada).
+
+```{r}
+nuevos <- expand_grid(alcaldia = poblacion$alcaldia, mes = c("2024-01", "2024-02")) |>
+  left_join(poblacion, by = "alcaldia") |>
+  left_join(prueba |> count(alcaldia, mes, name = "observado"), by = c("alcaldia", "mes")) |>
+  mutate(observado = coalesce(observado, 0L), dias = ifelse(mes == "2024-01", 31, 29),
+         mes_del_anio = factor(substr(mes, 6, 7), levels(por_alcaldia$mes_del_anio)),
+         exposicion = poblacion_2020 * dias / 365.25 / 1e5,
+         alcaldia = factor(alcaldia, levels(por_alcaldia$alcaldia)))   # mismos niveles que al ajustar
+
+X <- model.matrix(~ alcaldia + mes_del_anio, data = nuevos)
+stopifnot(identical(colnames(X), names(coef(espacial))))
+betas <- MASS::mvrnorm(5000, coef(espacial), vcov(espacial))
+simulados <- sapply(seq_len(nrow(betas)), function(b) {
+  mu <- exp(X %*% betas[b, ] + log(nuevos$exposicion))
+  rnbinom(nrow(nuevos), size = espacial$theta, mu = mu)
+})
+nuevos <- nuevos |> mutate(predicho = exp(X %*% coef(espacial) + log(exposicion))[, 1],
+                           inf = apply(simulados, 1, quantile, 0.05), sup = apply(simulados, 1, quantile, 0.95),
+                           dentro = observado >= inf & observado <= sup)
+c(celdas = nrow(nuevos), cobertura_90 = mean(nuevos$dentro),
+  total_observado = sum(nuevos$observado), total_predicho = sum(nuevos$predicho))
+```
+
+```{r, fig.height = 5.5}
+ggplot(nuevos, aes(predicho, observado)) +
+  geom_abline(linetype = 2, colour = "grey50") +
+  geom_errorbarh(aes(xmin = predicho, xmax = predicho, y = observado), height = 0) +
+  geom_linerange(aes(x = predicho, ymin = inf, ymax = sup), colour = "grey70", linewidth = 2) +
+  geom_point(aes(colour = dentro), size = 2) +
+  scale_colour_manual(values = c(`TRUE` = "#1a73e8", `FALSE` = "#d93025"), labels = c(`TRUE` = "dentro del intervalo", `FALSE` = "fuera"), name = NULL) +
+  facet_wrap(~ mes) + scale_x_log10() + scale_y_log10() +
+  labs(x = "Predicho (escala logarítmica)", y = "Observado", title = "Predicción fuera de muestra por alcaldía",
+       subtitle = "Barras grises: intervalo de predicción de 90%") +
+  theme(legend.position = "top")
+```
+
+Los intervalos de 90% contienen el valor observado en `r sum(nuevos$dentro)` de `r nrow(nuevos)` celdas (`r round(100 * mean(nuevos$dentro))`%), como deberían. **Pero en el total el modelo se queda corto**: predice `r round(sum(nuevos$predicho))` atropellamientos y ocurrieron `r sum(nuevos$observado)`, unos `r round(100 * (1 - sum(nuevos$predicho) / sum(nuevos$observado)))`% menos. Las celdas son tan variables que el sesgo no se nota en cada una, pero al sumarlas aparece. **Por eso hay que validar a varios niveles**, no solo celda por celda.
+
+¿De dónde viene el sesgo? Comparemos los mismos meses en años distintos:
+
+```{r}
+confirmados |> filter(substr(mes, 6, 7) %in% c("01", "02")) |> count(mes)
+```
+
+Enero y febrero de 2022 fueron mucho más bajos que los de 2023 y 2024, que son casi idénticos entre sí. (Enero de 2022 coincide con la ola de ómicron de COVID-19, cuando bajó la movilidad; los datos por sí solos no prueban esa causa.) El modelo promedia ambos años y por eso subestima 2024. Hay varias correcciones posibles: dar más peso a los datos recientes, agregar una tendencia o marcar ese periodo como atípico. Elegir entre ellas es una decisión que hay que justificar, no un ajuste automático.
+
+## Lo que agrega este capítulo
+
+- **La ventana del curso era una simplificación consciente.** El GLM confirma que la tasa cambia mucho con la hora (la tarde temprana es la de mayor riesgo) y algo con el día y con la temporada.
+- **La heterogeneidad del capítulo 2 era estacional.** Un modelo con mes del año la explica.
+- **El denominador decide la conclusión.** Con la población residente como exposición, Cuauhtémoc parece la alcaldía más riesgosa; con la población que de verdad camina ahí, el resultado podría ser otro.
+- **Validar fuera de muestra encontró lo que el ajuste no mostraba**: un sesgo en el total por un periodo atípico en los datos de entrenamiento.
+
+Es el mismo flujo que el de un modelo de frecuencia de siniestros en una aseguradora o un modelo de riesgo en un banco: elegir la exposición, revisar la sobredispersión, interpretar razones de tasas y validar con datos que el modelo no vio.

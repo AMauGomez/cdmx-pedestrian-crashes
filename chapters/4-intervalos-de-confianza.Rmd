@@ -1,0 +1,205 @@
+---
+title: "4. Estimación por intervalos"
+subtitle: "Inferencia Estadística · Caso de estudio: atropellamientos en la CDMX"
+output: html_document
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, fig.width = 8, fig.height = 4.5)
+source("funciones-caso.R")
+set.seed(2026)
+```
+
+*Temario: unidad 4 (Inferencia Estadística, clave 1541).*
+
+El estimador puntual de marzo de 2023 dice que, en hora pico, atropellan a alguien cada $\hat\mu$ minutos. Pero otro mes habría dado otro número. Un **intervalo de confianza** da un rango de valores de $\mu$ compatibles con los datos y dice con qué frecuencia el método acierta.
+
+```{r}
+atropellamientos <- leer_atropellamientos()
+x <- muestra_curso(atropellamientos)
+n <- length(x); suma <- sum(x)
+c(n = n, media = mean(x))
+```
+
+## 4.1 Intervalo aleatorio
+
+Un intervalo $[L(X), U(X)]$ cuyos extremos dependen de la muestra es **aleatorio**: cambia con cada muestra. La confianza de 95% es una propiedad del **método**: si repitiéramos el muestreo muchas veces, 95% de los intervalos contendrían a $\mu$. Lo vemos con 50 muestras simuladas con $\mu = 35$:
+
+```{r, fig.height = 5}
+mu <- 35
+pivotal <- function(z, nivel = 0.95) {          # intervalo exacto (sección 4.3.1)
+  a <- 1 - nivel; s <- sum(z); k <- length(z)
+  c(inferior = 2 * s / qchisq(1 - a / 2, 2 * k), superior = 2 * s / qchisq(a / 2, 2 * k))
+}
+ic_sim <- t(replicate(50, pivotal(rexp(n, 1 / mu))))
+ic_sim <- as_tibble(ic_sim) |> mutate(muestra = row_number(), contiene = inferior <= mu & superior >= mu)
+ggplot(ic_sim, aes(y = muestra, xmin = inferior, xmax = superior, colour = contiene)) +
+  geom_errorbar(width = 0, orientation = "y", linewidth = 0.8) +
+  geom_vline(xintercept = mu, linetype = 2) +
+  scale_colour_manual(values = c(`TRUE` = "grey50", `FALSE` = "#d93025"), labels = c(`TRUE` = "contiene a mu", `FALSE` = "no lo contiene"), name = NULL) +
+  labs(x = "minutos", y = "muestra simulada", title = "50 intervalos de confianza de 95% para mu (mu verdadera = 35)") +
+  theme(legend.position = "top")
+```
+
+Cada intervalo, una vez calculado, contiene o no contiene a $\mu$. Lo que tiene probabilidad 0.95 es el procedimiento, no un intervalo en particular.
+
+## 4.2 Intervalos de confianza
+
+Un **intervalo de confianza** de nivel $1-\alpha$ es un intervalo aleatorio que cumple $P(L(X) \le \mu \le U(X)) = 1 - \alpha$ para todo valor de $\mu$. Usaremos $\alpha = 0.05$.
+
+## 4.3 Métodos para construir un intervalo de confianza
+
+### 4.3.1 Método pivotal
+
+Un **pivote** es una función de la muestra y del parámetro cuya distribución no depende del parámetro. En el capítulo 1 vimos que
+
+$$
+Q = \frac{2\sum X_i}{\mu} \sim \chi^2_{2n}.
+$$
+
+Entonces $P\left(\chi^2_{2n,\,\alpha/2} \le Q \le \chi^2_{2n,\,1-\alpha/2}\right) = 1 - \alpha$, y despejando $\mu$:
+
+$$
+\left[\frac{2\sum x_i}{\chi^2_{2n,\,1-\alpha/2}}, \ \frac{2\sum x_i}{\chi^2_{2n,\,\alpha/2}}\right].
+$$
+
+Este intervalo es **exacto**: su confianza es 95% para cualquier tamaño de muestra.
+
+```{r}
+ic_pivotal <- pivotal(x)
+ic_pivotal
+```
+
+### 4.3.2 Método general
+
+Cuando no hay un pivote evidente, se usa la distribución del estimador. Si $T = \sum X_i \sim \text{Gamma}(n, \text{tasa} = 1/\mu)$, el intervalo es el conjunto de valores de $\mu$ que hacen que el valor observado de $T$ no sea extremo: resolvemos $F_T(t_{obs}; \mu) = 1 - \alpha/2$ y $F_T(t_{obs}; \mu) = \alpha/2$.
+
+```{r}
+cola <- function(p) uniroot(function(m) pgamma(suma, shape = n, rate = 1 / m) - p, c(1, 500))$root
+c(inferior = cola(1 - 0.025), superior = cola(0.025))
+```
+
+Da exactamente el intervalo pivotal: en este modelo ambos métodos coinciden.
+
+**Revisando un supuesto escondido: ¿$n$ es fijo?** El pivote supone una muestra de tamaño fijo $n$. Pero nosotros no fijamos cuántos atropellamientos observar: fijamos el **tiempo** $\tau$ (los días laborables de marzo, 180 minutos cada uno), y el número de eventos $N$ es aleatorio, $N \sim \text{Poisson}(\tau/\mu)$. Para ese diseño, el intervalo exacto es el de **Garwood**, que se obtiene invirtiendo la distribución Poisson de $N$:
+
+$$
+\left[\frac{2\tau}{\chi^2_{2N+2,\,1-\alpha/2}}, \ \frac{2\tau}{\chi^2_{2N,\,\alpha/2}}\right].
+$$
+
+```{r}
+eventos <- hora_pico(atropellamientos) |> depurar_duplicados() |> filter(mes == "2023-03") |> nrow()
+dias_laborables <- sum(format(seq(as.Date("2023-03-01"), as.Date("2023-03-31"), by = "day"), "%u") <= "5")
+tiempo <- dias_laborables * 180
+c(N = eventos, tau = tiempo,
+  inferior = 2 * tiempo / qchisq(0.975, 2 * eventos + 2), superior = 2 * tiempo / qchisq(0.025, 2 * eventos))
+```
+
+Prácticamente igual al pivotal: con más de cien eventos, tratar $n$ como fijo no cambia la conclusión. Con pocos eventos sí importaría.
+
+**Intervalo de verosimilitud.** Otra construcción general son los valores de $\mu$ cuya log-verosimilitud no está muy por debajo del máximo: $\{\mu : 2[\ell(\hat\mu) - \ell(\mu)] \le \chi^2_{1,\,0.95}\}$. Anticipa la prueba del cociente de verosimilitudes del capítulo 5.
+
+```{r}
+logver <- function(m) -n * log(m) - suma / m
+corte <- logver(mean(x)) - qchisq(0.95, 1) / 2
+ic_verosimilitud <- c(inferior = uniroot(function(m) logver(m) - corte, c(1, mean(x)))$root,
+                      superior = uniroot(function(m) logver(m) - corte, c(mean(x), 500))$root)
+ic_verosimilitud
+```
+
+## 4.4 Intervalos basados en muestras grandes
+
+Por la normalidad asintótica del EMV (capítulo 3), $\hat\mu \approx N(\mu, \mu^2/n)$, y el **intervalo de Wald** es
+
+$$
+\hat\mu \pm z_{1-\alpha/2} \, \frac{\hat\mu}{\sqrt n}.
+$$
+
+```{r}
+ic_wald <- mean(x) + c(inferior = -1, superior = 1) * qnorm(0.975) * mean(x) / sqrt(n)
+ic_wald
+```
+
+### ¿Qué tan buenos son? Cobertura simulada
+
+Con muestras grandes los tres intervalos casi coinciden. Con muestras chicas no: el de Wald es simétrico, pero la distribución de $\bar X$ es asimétrica.
+
+```{r}
+wald <- function(z) mean(z) + c(-1, 1) * qnorm(0.975) * mean(z) / sqrt(length(z))
+cobertura <- function(k, B = 10000) {
+  r <- replicate(B, { z <- rexp(k, 1 / mu); c(p = { i <- pivotal(z); i[[1]] <= mu & i[[2]] >= mu },
+                                               w = { i <- wald(z); i[[1]] <= mu & i[[2]] >= mu }) })
+  c(n = k, pivotal_exacto = mean(r["p", ]), wald = mean(r["w", ]))
+}
+round(t(sapply(c(5, 10, 30, n), cobertura)), 3)
+```
+
+El intervalo pivotal mantiene su 95% en cualquier $n$; el de Wald se queda corto con muestras chicas y solo se acerca a 95% cuando $n$ crece.
+
+## Robustez: bootstrap por días (sin suponer el modelo)
+
+Los intervalos anteriores suponen que el modelo exponencial es correcto. En el capítulo 2 vimos que es una buena aproximación, pero no exacta. Un **bootstrap por días** no supone el modelo: remuestrea **días completos** de marzo (con todos sus atropellamientos) y recalcula $\hat\mu = \tau/N$, el tiempo observado entre el número de eventos (capítulo 3). Al remuestrear días enteros respeta cualquier dependencia dentro de cada día.
+
+```{r}
+marzo <- hora_pico(atropellamientos) |> depurar_duplicados() |> filter(mes == "2023-03")
+dias_marzo <- seq(as.Date("2023-03-01"), as.Date("2023-03-31"), by = "day")
+dias_marzo <- dias_marzo[format(dias_marzo, "%u") <= "5"]
+eventos_dia <- tabulate(match(as.Date(marzo$fecha), dias_marzo), nbins = length(dias_marzo))
+
+mu_boot <- replicate(10000, {
+  e <- sample(eventos_dia, replace = TRUE)
+  length(e) * 180 / sum(e)
+})
+ic_bootstrap <- quantile(mu_boot, c(0.025, 0.975))
+ic_bootstrap
+```
+
+## Resumen y respuesta parcial
+
+```{r}
+tabla <- rbind(pivotal_exacto = ic_pivotal, verosimilitud = ic_verosimilitud,
+               wald = ic_wald, bootstrap_por_dias = unname(ic_bootstrap))
+data.frame(round(tabla, 2), ancho = round(tabla[, 2] - tabla[, 1], 2),
+           contiene_30 = ifelse(tabla[, 1] <= 30 & tabla[, 2] >= 30, "sí", "no"))
+```
+
+Los cuatro métodos dan intervalos parecidos, y **todos contienen el 30**: con un mes de datos, "cada media hora" es compatible con lo observado.
+
+El bootstrap por días salió **más angosto**. ¿Por qué? Revisemos cuánto varían los conteos diarios de marzo:
+
+```{r}
+c(dias = length(eventos_dia), media = mean(eventos_dia), varianza = var(eventos_dia),
+  varianza_entre_media = var(eventos_dia) / mean(eventos_dia))
+```
+
+En una Poisson la razón sería 1. En marzo los días variaron *menos* de lo que predice el modelo, y el bootstrap, que solo usa la variabilidad observada, lo refleja. Con solo `r length(eventos_dia)` días eso puede ser azar; además, el bootstrap con pocos grupos tiende a ser optimista. No es razón para preferir el intervalo más angosto. Lo valioso es que **un método que no supone el modelo llega a la misma conclusión**.
+
+**Invarianza.** Como $\mu \mapsto 60/\mu$ es monótona, el intervalo para la tasa por hora se obtiene transformando los extremos:
+
+```{r}
+c(atropellamientos_por_hora = 60 / mean(x), inferior = 60 / ic_pivotal[["superior"]], superior = 60 / ic_pivotal[["inferior"]])
+```
+
+**¿Y con todos los datos?** Con los dos años completos el intervalo es mucho más angosto:
+
+```{r}
+todo <- hora_pico(atropellamientos) |> depurar_duplicados() |> filter(fecha < "2024-01-01")
+x_todo <- tiempos_entre(todo, "2022-01-01", "2023-12-31")
+c(n = length(x_todo), media = mean(x_todo), pivotal(x_todo))
+```
+
+Pero este intervalo supone que los 24 meses tienen la misma $\mu$, y en el capítulo 2 **rechazamos** esa homogeneidad. Si los meses difieren, la incertidumbre real es mayor. Un **bootstrap por meses** no lo supone: remuestrea meses completos (con sus atropellamientos y sus días) y recalcula $\hat\mu = \tau/N$ del periodo. Ahora $\mu$ es la **media del periodo**, promediando meses buenos y malos.
+
+```{r}
+dias_todo <- seq(as.Date("2022-01-01"), as.Date("2023-12-31"), by = "day")
+dias_todo <- dias_todo[format(dias_todo, "%u") <= "5"]
+meses <- todo |> count(mes, name = "eventos") |>
+  left_join(tibble(mes = format(dias_todo, "%Y-%m")) |> count(mes, name = "dias"), by = "mes")
+mu_boot_meses <- replicate(10000, { i <- sample(nrow(meses), replace = TRUE); sum(meses$dias[i]) * 180 / sum(meses$eventos[i]) })
+rbind(pivotal_supone_meses_iguales = pivotal(x_todo),
+      bootstrap_por_meses = unname(quantile(mu_boot_meses, c(0.025, 0.975))))
+```
+
+El intervalo honesto es más ancho, pero **el 30 sigue quedando fuera**. Un mes no alcanza para distinguir "cada 30 minutos" de "cada 35"; dos años sí, aun tomando en cuenta que unos meses son peores que otros. Formalizar esta decisión, y medir qué tan probable es acertar con cada tamaño de muestra, es el tema del capítulo 5.
+
+**Cómo NO interpretar un intervalo.** "Hay 95% de probabilidad de que $\mu$ esté entre `r round(ic_pivotal[1], 1)` y `r round(ic_pivotal[2], 1)`" es incorrecto en la estadística clásica: $\mu$ es fijo y ese intervalo ya lo contiene o no. Lo correcto: "este intervalo se construyó con un método que acierta 95% de las veces". La afirmación probabilística directa sobre $\mu$ sí tiene sentido en el enfoque bayesiano del capítulo 3, con la distribución posterior.

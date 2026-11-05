@@ -1,0 +1,62 @@
+incidente_c4,codigo_cierre,reportes
+Accidente automovilístico,A,694
+Accidente automovilístico,D,106
+Accidente automovilístico,F,45
+Accidente automovilístico,I,4
+Atropellado,A,20537
+Atropellado,D,26436
+Atropellado,F,5637
+Atropellado,I,105
+Choque con lesionados,A,57124
+Choque con lesionados,D,71286
+Choque con lesionados,F,17833
+Choque con lesionados,I,491
+Choque con prensados,A,456
+Choque con prensados,D,429
+Choque con prensados,F,47
+Choque con prensados,I,4
+Choque sin lesionados,A,71942
+Choque sin lesionados,D,87263
+Choque sin lesionados,F,69264
+Choque sin lesionados,I,2552
+Ciclista,A,3747
+Ciclista,D,1881
+Ciclista,F,960
+Ciclista,I,15
+Ferroviario,A,8
+Ferroviario,D,84
+Ferroviario,F,1
+Incidente de tránsito,A,9
+Incidente de tránsito,D,19
+Incidente de tránsito,F,174
+Incidente de tránsito,I,180
+Monopatín,A,116
+Monopatín,D,63
+Monopatín,F,25
+Motociclista,A,23196
+Motociclista,D,20666
+Motociclista,F,6249
+Motociclista,I,162
+Otros,A,142
+Otros,D,68
+Otros,F,47
+Otros,I,6
+Persona atrapada / desbarrancada,A,1578
+Persona atrapada / desbarrancada,D,457
+Persona atrapada / desbarrancada,F,673
+Persona atrapada / desbarrancada,I,10
+Persona atropellada,D,9
+Persona atropellada,F,14
+Persona atropellada,I,3
+Vehiculo desbarrancado,A,105
+Vehiculo desbarrancado,D,124
+Vehiculo desbarrancado,F,27
+Vehiculo desbarrancado,I,7
+Vehículo atrapadovarado,A,927
+Vehículo atrapadovarado,D,468
+Vehículo atrapadovarado,F,646
+Vehículo atrapadovarado,I,28
+Volcadura,A,3486
+Volcadura,D,4944
+Volcadura,F,569
+Volcadura,I,40

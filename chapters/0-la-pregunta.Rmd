@@ -1,0 +1,67 @@
+---
+title: "0. La pregunta: ¿atropellan a alguien cada media hora?"
+subtitle: "Inferencia Estadística · Caso de estudio: atropellamientos en la CDMX"
+output: html_document
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, fig.width = 8, fig.height = 4.5)
+source("funciones-caso.R")
+```
+
+## La pregunta
+
+En la Ciudad de México se repite que **"en hora pico atropellan a alguien cada media hora"**. ¿Es cierto?
+
+Durante todo el curso vamos a contestar esta pregunta con datos reales. Al principio no tenemos las herramientas para hacerlo bien; cada unidad del temario agrega una pieza, y en la última (pruebas de hipótesis) podremos responderla con rigor.
+
+## Los datos
+
+El Centro de Comando, Control, Cómputo, Comunicaciones y Contacto Ciudadano (C5) registra cada reporte de incidente vial: fecha, hora al segundo, tipo de incidente, alcaldía, coordenadas y si el reporte se confirmó. Los datos son abiertos (licencia CC BY 4.0) y se preparan con `0-datos-atropellamientos.R`.
+
+```{r}
+atropellamientos <- leer_atropellamientos()
+glimpse(atropellamientos)
+```
+
+No todos los reportes son atropellamientos reales: muchos son duplicados (varias personas llaman por el mismo hecho) o falsos. Trabajaremos solo con los **confirmados** (código de cierre `A`).
+
+```{r}
+atropellamientos |> count(codigo_cierre, name = "reportes") |>
+  mutate(porcentaje = round(100 * reportes / sum(reportes), 1))
+```
+
+## Qué vamos a medir
+
+Definimos la variable aleatoria
+
+$$
+X = \text{minutos entre dos atropellamientos confirmados consecutivos}
+$$
+
+en la **hora pico de días laborables (lunes a viernes, de 18:00 a 21:00)**. El tiempo se mide con un "reloj de hora pico" que solo corre en esas horas: cuando termina la ventana de un día, el reloj continúa a las 18:00 del siguiente día laborable. En el capítulo 2 veremos por qué medir así es indispensable.
+
+Su media, $\mu = E[X]$, es el parámetro que nos interesa: la frase "cada media hora" dice que $\mu = 30$ minutos.
+
+## La muestra
+
+Tomamos los atropellamientos de **marzo de 2023**, un mes sin periodos vacacionales largos (solo tiene el festivo del lunes 20; en el capítulo 2 revisamos que los festivos no cambian la tasa). (En el capítulo 2 descubriremos que algunos atropellamientos aparecen confirmados dos veces; la muestra ya los cuenta una sola vez.)
+
+```{r}
+x <- muestra_curso(atropellamientos)
+length(x)
+summary(x)
+mean(x)
+```
+
+La media muestral no es 30 minutos, sino `r round(mean(x), 1)`. ¿Eso basta para decir que la frase es falsa? Si tomáramos otro mes, ¿obtendríamos lo mismo? ¿Qué tan lejos de 30 tendría que estar la media para estar seguros?
+
+Todavía no podemos contestar. Ese es el plan del curso:
+
+| Capítulo | Unidad del temario | Qué aporta a la respuesta |
+|---|---|---|
+| 1 | Distribuciones muestrales | Cuánto cambia la media de una muestra a otra |
+| 2 | Análisis exploratorio | Si los datos se comportan como un modelo exponencial, y en qué condiciones |
+| 3 | Estimación puntual | El mejor estimador de $\mu$ y qué tan preciso puede ser |
+| 4 | Estimación por intervalos | Un rango de valores plausibles para $\mu$ |
+| 5 | Pruebas de hipótesis | La respuesta: ¿es compatible $\mu = 30$ con los datos? |

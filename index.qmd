@@ -1,0 +1,206 @@
+---
+title: "Is someone hit by a car every 30 minutes in Mexico City?"
+subtitle: "Testing a popular claim with 2 years of emergency-call records, and the three traps that almost gave the wrong answer"
+author: "Aaron Mauricio Gómez Jiménez"
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-depth: 2
+    code-fold: true
+    code-tools: false
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r}
+#| include: false
+source("chapters/funciones-caso.R")
+set.seed(2026)
+datos <- "chapters/datos/"
+a <- leer_atropellamientos(paste0(datos, "atropellamientos_cdmx.csv"))
+f0 <- function(x) format(round(x), big.mark = ",")
+
+# The course window: confirmed crashes, weekdays 18:00-21:00, near-duplicates removed
+pico_crudo <- hora_pico(a |> filter(fecha < "2024-01-01"))
+pico <- pico_crudo |> depurar_duplicados()
+x_todo <- tiempos_entre(pico, "2022-01-01", "2023-12-31")
+x_marzo <- muestra_curso(a)
+n_m <- length(x_marzo)
+p_marzo <- { q <- 2 * sum(x_marzo) / 30; c <- pchisq(q, 2 * n_m); 2 * min(c, 1 - c) }
+ic_marzo <- 2 * sum(x_marzo) / qchisq(c(0.975, 0.025), 2 * n_m)
+potencia35 <- pchisq(30 / 35 * qchisq(0.025, 2 * n_m), 2 * n_m) + 1 - pchisq(30 / 35 * qchisq(0.975, 2 * n_m), 2 * n_m)
+
+# Two years, uncertainty by month-level bootstrap (months are not homogeneous)
+dias_lab <- seq(as.Date("2022-01-01"), as.Date("2023-12-31"), by = "day"); dias_lab <- dias_lab[format(dias_lab, "%u") <= "5"]
+meses <- pico |> count(mes, name = "eventos") |>
+  left_join(tibble(mes = format(dias_lab, "%Y-%m")) |> count(mes, name = "dias"), by = "mes")
+mu_periodo <- sum(meses$dias) * 180 / sum(meses$eventos)
+boot <- replicate(10000, { i <- sample(nrow(meses), replace = TRUE); sum(meses$dias[i]) * 180 / sum(meses$eventos[i]) })
+ic_periodo <- quantile(boot, c(0.025, 0.975)); z <- (mu_periodo - 30) / sd(boot)
+esperados <- sum(meses$eventos) * meses$dias / sum(meses$dias)
+X2 <- sum((meses$eventos - esperados)^2 / esperados); p_homog <- pchisq(X2, nrow(meses) - 1, lower.tail = FALSE)
+
+# Trap 1: measuring only inside each window
+sesgo_real <- mean(tiempos_dentro_de_ventana(pico))
+sim <- lapply(1:5000, function(i) sort(runif(rpois(1, 180 / 35), 0, 180)))
+sesgo_sim <- mean(unlist(lapply(sim, diff)))
+
+# Trap 2: the same crash confirmed twice
+cd <- pico_crudo |> arrange(momento) |> group_by(fecha) |>
+  mutate(min = as.numeric(momento - lag(momento), units = "mins"),
+         m = 111000 * sqrt((latitud - lag(latitud))^2 + (cos(latitud * pi / 180) * (longitud - lag(longitud)))^2)) |>
+  ungroup() |> filter(!is.na(min))
+cerca <- mean(cd$m[cd$min < 10] < 500, na.rm = TRUE)
+i <- sample(nrow(cd), 20000, TRUE); j <- sample(nrow(cd), 20000, TRUE)
+azar <- mean(111000 * sqrt((cd$latitud[i] - cd$latitud[j])^2 + (cos(cd$latitud[i] * pi / 180) * (cd$longitud[i] - cd$longitud[j]))^2) < 500, na.rm = TRUE)
+
+# Beyond the course: frequency GLM, all hours
+conf <- a |> filter(codigo_cierre == "A") |> depurar_duplicados()
+ent <- conf |> filter(fecha < "2024-01-01"); prueba <- conf |> filter(fecha >= "2024-01-01")
+celdas <- expand_grid(fecha = seq(as.Date("2022-01-01"), as.Date("2023-12-31"), by = "day"), hora_num = 0:23) |>
+  left_join(ent |> mutate(fecha = as.Date(fecha)) |> count(fecha, hora_num), by = c("fecha", "hora_num")) |>
+  mutate(n = coalesce(n, 0L), hora = factor(hora_num), dia = factor(format(fecha, "%u")),
+         mes = factor(format(fecha, "%m")), anio = factor(format(fecha, "%Y")))
+nb_t <- MASS::glm.nb(n ~ hora + dia + mes + anio, data = celdas)
+ic_t <- confint.default(nb_t)
+rr_hora <- tibble(hora = 1:23, rr = exp(coef(nb_t)[paste0("hora", 1:23)]),
+                  inf = exp(ic_t[paste0("hora", 1:23), 1]), sup = exp(ic_t[paste0("hora", 1:23), 2]))
+pob <- read_csv(paste0(datos, "poblacion_alcaldias_2020.csv"), show_col_types = FALSE)
+dias_mes <- tibble(fecha = seq(as.Date("2022-01-01"), as.Date("2023-12-31"), by = "day")) |> count(mes = format(fecha, "%Y-%m"), name = "dias")
+pa <- expand_grid(alcaldia = pob$alcaldia, mes = dias_mes$mes) |>
+  left_join(ent |> count(alcaldia, mes), by = c("alcaldia", "mes")) |> left_join(dias_mes, by = "mes") |> left_join(pob, by = "alcaldia") |>
+  mutate(n = coalesce(n, 0L), mes_del_anio = factor(substr(mes, 6, 7)), exposicion = poblacion_2020 * dias / 365.25 / 1e5,
+         alcaldia = relevel(factor(alcaldia), "Iztapalapa"))
+tasas <- pa |> group_by(alcaldia) |> summarise(n = sum(n), e = sum(exposicion)) |>
+  mutate(tasa = n / e, inf = qchisq(0.025, 2 * n) / 2 / e, sup = qchisq(0.975, 2 * n + 2) / 2 / e)
+tasa_ciudad <- sum(tasas$n) / sum(tasas$e)
+esp <- MASS::glm.nb(n ~ alcaldia + mes_del_anio + offset(log(exposicion)), data = pa)
+nuevos <- expand_grid(alcaldia = pob$alcaldia, mes = c("2024-01", "2024-02")) |> left_join(pob, by = "alcaldia") |>
+  left_join(prueba |> count(alcaldia, mes, name = "obs"), by = c("alcaldia", "mes")) |>
+  mutate(obs = coalesce(obs, 0L), dias = ifelse(mes == "2024-01", 31, 29),
+         mes_del_anio = factor(substr(mes, 6, 7), levels(pa$mes_del_anio)), exposicion = poblacion_2020 * dias / 365.25 / 1e5,
+         alcaldia = factor(alcaldia, levels(pa$alcaldia)))
+X <- model.matrix(~ alcaldia + mes_del_anio, data = nuevos); stopifnot(identical(colnames(X), names(coef(esp))))
+betas <- MASS::mvrnorm(5000, coef(esp), vcov(esp))
+sims <- sapply(1:5000, function(b) rnbinom(nrow(nuevos), size = esp$theta, mu = exp(X %*% betas[b, ] + log(nuevos$exposicion))))
+nuevos$pred <- exp(X %*% coef(esp) + log(nuevos$exposicion))[, 1]
+dentro <- nuevos$obs >= apply(sims, 1, quantile, 0.05) & nuevos$obs <= apply(sims, 1, quantile, 0.95)
+```
+
+**November 2026** · Teaching case and portfolio project · Code and data in the [repository](https://github.com/AMauGomez/cdmx-pedestrian-crashes)
+
+::: {.callout-note appearance="simple"}
+**Author's note.** This analysis is the backbone of the *Statistical Inference* course I teach at the Facultad de Ciencias, UNAM (syllabus 1541). Each chapter answers one part of the question with the tools of one unit of the syllabus: sampling distributions, exploratory analysis, point estimation, confidence intervals and hypothesis testing. A final chapter goes beyond the course with frequency GLMs. The chapters are in Spanish (links below); this page summarises them.
+:::
+
+```{=html}
+<style>
+.flow{display:flex;flex-wrap:wrap;gap:.6rem;margin:1.2rem 0 .4rem;align-items:stretch}
+.flow .step{flex:1 1 160px;border:1px solid #dadce0;border-radius:10px;padding:.75rem .8rem;background:#fafbfc}
+.flow .step .n{font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:#5f6368}
+.flow .step .big{font-size:1.35rem;font-weight:700;line-height:1.15;margin:.2rem 0}
+.flow .step .txt{font-size:.85rem;color:#3c4043;line-height:1.3}
+.flow .step.hl{border-color:#1a73e8;background:#e8f0fe}
+.keybox{border-left:4px solid #1a73e8;background:#f8f9fa;padding:.8rem 1rem;margin:1rem 0;border-radius:4px}
+.keybox ul{margin-bottom:0}
+</style>
+```
+
+```{r}
+#| results: asis
+cat(sprintf('<div class="flow">
+ <div class="step"><div class="n">Data</div><div class="big">%s</div><div class="txt">pedestrian-crash reports to Mexico City\'s C5 emergency centre, Jan 2022 – Feb 2024</div></div>
+ <div class="step"><div class="n">Question</div><div class="big">30 min?</div><div class="txt">"at rush hour, someone is hit by a car every half hour"</div></div>
+ <div class="step hl"><div class="n">Answer (2022–2023)</div><div class="big">%.0f min</div><div class="txt">95%% CI %.1f–%.1f · the claim overstates the frequency by about %.0f%%</div></div>
+ <div class="step hl"><div class="n">Out-of-sample check</div><div class="big">%d / %d</div><div class="txt">borough-months of 2024 inside the 90%% prediction intervals</div></div>
+</div>', f0(nrow(a)), mu_periodo, ic_periodo[1], ic_periodo[2], 100 * (mu_periodo / 30 - 1), sum(dentro), length(dentro)))
+```
+
+## The question and the answer
+
+A common saying in Mexico City is that **"at rush hour, someone is hit by a car every half hour."** I turned it into a testable statement: on weekdays between 18:00 and 21:00, the mean time between confirmed pedestrian crashes is $\mu = 30$ minutes.
+
+- **With one month of data (March 2023)** the claim cannot be rejected: $\hat\mu$ = `r round(mean(x_marzo), 1)` minutes, exact $\chi^2$ test p = `r round(p_marzo, 2)`. But that test had only a `r round(100 * potencia35)`% chance of detecting a true mean of 35 minutes, so *not rejecting* says little.
+- **With two years** the answer is clear: someone was hit every **`r round(mu_periodo, 1)` minutes** on average (95% CI `r round(ic_periodo[1], 1)`–`r round(ic_periodo[2], 1)`, z = `r round(z, 1)`). That is `r round(60 / mu_periodo, 2)` confirmed crashes per hour instead of 2.
+
+```{r}
+#| fig-height: 2.6
+tibble(datos = factor(c("March 2023 (121 intervals)", "2022–2023 (month bootstrap)"), c("March 2023 (121 intervals)", "2022–2023 (month bootstrap)")),
+       est = c(mean(x_marzo), mu_periodo), inf = c(ic_marzo[1], ic_periodo[1]), sup = c(ic_marzo[2], ic_periodo[2])) |>
+  ggplot(aes(est, datos)) + geom_vline(xintercept = 30, linetype = 2, colour = "#d93025") +
+  geom_pointrange(aes(xmin = inf, xmax = sup), colour = "#1a73e8", linewidth = 1) +
+  annotate("text", x = 30, y = 2.45, label = "the claim: 30 min", colour = "#d93025", hjust = 1.05, size = 3.5) +
+  labs(x = "Mean minutes between pedestrian crashes, weekday rush hour (95% CI)", y = NULL)
+```
+
+The statistics are standard. **What makes the difference is three data problems that, left alone, would have produced a confident wrong answer.**
+
+## Three traps
+
+### 1. The observation window biases the answer, and every diagnostic missed it
+
+We only watch the city from 18:00 to 21:00. The natural approach measures intervals inside each evening, but it throws away the time before the first crash and after the last one, and long intervals are the ones most likely to be cut. In a simulated Poisson process with a known mean of 35 minutes, that method estimates **`r round(sesgo_sim, 1)` minutes**, and the biased intervals *still look exponential*: the histogram, the Q-Q plot and the goodness-of-fit test all pass. On the real data it gives `r round(sesgo_real, 1)` minutes, which would have reversed the conclusion: crashes would look *more* frequent than the claim, not less.
+
+**Fix:** a "rush-hour clock" that stitches consecutive evenings together. It is justified by the memoryless property of the exponential, and it is checked against the exposure-based estimator (time observed ÷ number of crashes), which agrees.
+
+### 2. The same crash, confirmed twice
+
+There were too many intervals under one minute for an exponential. Among reports less than 10 minutes apart, **`r round(100 * cerca, 1)`% were within 500 m of each other**, against `r round(100 * azar, 2)`% for two random reports. These are the same crash registered under two call numbers. Removing them (`r f0(nrow(pico_crudo))` → `r f0(nrow(pico))` events) fixed the goodness of fit: a Kolmogorov–Smirnov test with the mean estimated (calibrated by parametric bootstrap, as in Lilliefors' test) goes from p < 0.001 to p ≈ 0.65.
+
+### 3. Months are not exchangeable, and a standard test did not notice
+
+The usual dispersion test on daily counts did not reject the Poisson model (p ≈ 0.10). A $\chi^2$ test of equal rates across the 24 months, with each month weighted by its observed days, did: p = `r format(signif(p_homog, 2), scientific = FALSE)`. The monthly mean ranges from `r round(min(meses$dias * 180 / meses$eventos))` to `r round(max(meses$dias * 180 / meses$eventos))` minutes. Treating two years as one homogeneous sample would understate the uncertainty. The two-year interval above therefore comes from a **bootstrap over months**, and the frequency model (below) shows the difference is **seasonal**: once month of the year is in the model, the remaining variation is consistent with chance (p = 0.57).
+
+## Beyond the course: a frequency model
+
+Instead of restricting the analysis to a window where the rate is constant, the last chapter **models** the rate. It uses the tool insurers use for claim frequency: a Poisson/negative binomial GLM with an exposure offset, fitted on all hours of 2022–2023 (`r f0(nrow(ent))` confirmed crashes).
+
+```{r}
+#| fig-height: 3.6
+ggplot(rr_hora, aes(hora, rr)) +
+  annotate("rect", xmin = 17.5, xmax = 20.5, ymin = -Inf, ymax = Inf, fill = "#e8f0fe") +
+  geom_pointrange(aes(ymin = inf, ymax = sup), colour = "#1a73e8") + geom_hline(yintercept = 1, linetype = 2) +
+  scale_x_continuous(breaks = seq(0, 23, 2)) +
+  labs(x = "Hour of day", y = "Rate ratio vs midnight", title = "Crash rate by hour (negative binomial GLM)",
+       subtitle = "Shaded: the 18:00–21:00 window used in the course")
+```
+
+- **Peak risk is early afternoon, not the evening rush.** The course window was chosen because its rate is stable, not because it is the most dangerous.
+- **The denominator decides the conclusion.** Per 100,000 residents, Cuauhtémoc has `r round(tasas$tasa[tasas$alcaldia == "Cuauhtémoc"])` crashes a year, `r round(tasas$tasa[tasas$alcaldia == "Cuauhtémoc"] / tasas$tasa[tasas$alcaldia == "Iztapalapa"], 1)` times Iztapalapa and three times the city's `r round(tasa_ciudad)`. But hundreds of thousands of people walk there without living there. A residential denominator measures the wrong exposure, which is the same question as "insured cars or kilometres driven?" in motor insurance.
+- **Out-of-sample validation found what the fit did not.** Predicting January–February 2024 by borough (data the model never saw), `r sum(dentro)` of `r length(dentro)` observations fall inside the 90% prediction intervals. The **total**, however, is underpredicted by `r round(100 * (1 - sum(nuevos$pred) / sum(nuevos$obs)))`%, because January–February 2022 were unusually low (the period coincides with the Omicron wave). Validating at only one level would have missed it.
+
+```{r}
+#| fig-height: 4.6
+ggplot(tasas, aes(tasa, reorder(alcaldia, tasa))) +
+  geom_vline(xintercept = tasa_ciudad, linetype = 2, colour = "grey40") +
+  geom_pointrange(aes(xmin = inf, xmax = sup), colour = "#1a73e8") +
+  labs(x = "Confirmed pedestrian crashes per 100,000 residents per year (2022–2023)", y = NULL,
+       title = "Rate by borough, with residents as exposure", subtitle = "Dashed line: whole city")
+```
+
+## The chapters (in Spanish)
+
+| | Chapter | Syllabus unit | What it adds to the answer |
+|---|---|---|---|
+| 0 | [La pregunta](chapters/0-la-pregunta.html) | — | The claim, the data, the variable |
+| 1 | [Distribuciones muestrales](chapters/1-distribuciones-muestrales.html) | 1 | Exact distribution of the mean, a $\chi^2$ pivot, why normal-theory results fail here |
+| 2 | [Análisis exploratorio](chapters/2-analisis-exploratorio.html) | 2 | The three traps; checking independence and identical distribution |
+| 3 | [Estimación puntual](chapters/3-estimacion-puntual.html) | 3 | Moments, MLE, Bayesian (credibility), Cramér–Rao, sufficiency, the exposure estimator |
+| 4 | [Intervalos de confianza](chapters/4-intervalos-de-confianza.html) | 4 | Pivotal, likelihood, Wald and Garwood intervals; simulated coverage; day and month bootstrap |
+| 5 | [Pruebas de hipótesis](chapters/5-pruebas-de-hipotesis.html) | 5 | Neyman–Pearson, power and sample size, likelihood-ratio test, paired vs independent samples, the answer |
+| 6 | [Modelos de frecuencia](chapters/6-modelos-de-frecuencia.html) | beyond | Poisson/negative binomial GLM with exposure, seasonality, out-of-sample validation |
+
+## Data and reproducibility
+
+- **Crash reports:** *Incidentes viales reportados por C5*, Gobierno de la Ciudad de México ([datos.cdmx.gob.mx](https://datos.cdmx.gob.mx/dataset/incidentes-viales-c5), CC BY 4.0). Only reports closed as *confirmed* (code A) are used; duplicates and false reports are excluded.
+- **Population:** Censo de Población y Vivienda 2020, INEGI.
+- Everything is reproducible in R: `Rscript run_all.R` downloads the raw file (~100 MB) and renders every chapter.
+
+**Skills shown:** Poisson processes · exact and asymptotic inference · bootstrap (block/cluster) · power analysis · likelihood-ratio tests · Bayesian conjugate updating · Poisson and negative binomial GLMs with exposure · out-of-sample validation · data-quality diagnostics · R · Quarto
+
+---
+
+Code: MIT License · Data: CC BY 4.0 (C5, Gobierno de la CDMX). Aaron Mauricio Gómez Jiménez · [LinkedIn](https://www.linkedin.com/in/amaugomezjimenez) · [ORCID](https://orcid.org/0009-0003-1099-0431)

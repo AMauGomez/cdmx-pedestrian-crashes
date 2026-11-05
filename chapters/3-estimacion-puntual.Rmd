@@ -1,0 +1,252 @@
+---
+title: "3. Estimación puntual"
+subtitle: "Inferencia Estadística · Caso de estudio: atropellamientos en la CDMX"
+output: html_document
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, fig.width = 8, fig.height = 4.5)
+source("funciones-caso.R")
+set.seed(2026)
+```
+
+*Temario: unidad 3 (Inferencia Estadística, clave 1541).*
+
+En el capítulo 2 justificamos el modelo: en hora pico, los minutos entre atropellamientos se comportan como una muestra aleatoria de una exponencial con media $\mu$. Ahora la pregunta es **cómo estimar $\mu$ de la mejor manera** y qué significa "mejor".
+
+```{r}
+atropellamientos <- leer_atropellamientos()
+x <- muestra_curso(atropellamientos)
+n <- length(x); suma <- sum(x)
+c(n = n, suma = suma, media = mean(x))
+```
+
+## 3.1 Estadísticas y estimadores
+
+Un **estimador** es una estadística que usamos para aproximar un parámetro. Para el mismo parámetro hay muchos candidatos razonables; por ejemplo, en la exponencial la mediana $m$ cumple $1 - e^{-m/\mu} = 1/2$, es decir, $m = \mu \cdot \ln 2 \approx 0.69\,\mu$. Despejando, $\mu = m / \ln 2$, y la mediana muestral entre $\ln 2$ es otro estimador de $\mu$:
+
+```{r}
+c(media_muestral = mean(x),
+  mediana_entre_ln2 = median(x) / log(2),
+  desviacion_estandar = sd(x))      # en la exponencial, la sd también es igual a mu
+```
+
+Tres estimadores, tres valores distintos. Las secciones siguientes dicen cómo construirlos y cómo elegir entre ellos.
+
+## 3.2 Métodos de construcción de estimadores
+
+### 3.2.1 Método de momentos
+
+Igualamos el primer momento poblacional, $E[X] = \mu$, con el muestral, $\bar x$: el estimador es $\hat\mu_{MM} = \bar X$. Para la **tasa** $\lambda = 1/\mu$ (atropellamientos por minuto) el estimador de momentos es $1/\bar X$.
+
+```{r}
+c(mu = mean(x), tasa_por_minuto = 1 / mean(x), por_hora = 60 / mean(x))
+```
+
+### 3.2.2 Máxima verosimilitud
+
+La verosimilitud de la muestra es
+
+$$
+L(\mu) = \prod_{i=1}^n \frac{1}{\mu} e^{-x_i/\mu} = \mu^{-n} \exp\left(-\frac{\sum x_i}{\mu}\right),
+\qquad \ell(\mu) = -n \log \mu - \frac{\sum x_i}{\mu}.
+$$
+
+Derivando e igualando a cero, $\hat\mu_{MV} = \bar X$: en la exponencial, momentos y máxima verosimilitud coinciden.
+
+```{r}
+logver <- function(mu) -n * log(mu) - suma / mu
+ggplot(data.frame(mu = c(15, 45)), aes(mu)) +
+  stat_function(fun = logver, linewidth = 1, colour = "#1a73e8") +
+  geom_vline(xintercept = mean(x), linetype = 2, colour = "#d93025") +
+  geom_vline(xintercept = 30, linetype = 3, colour = "grey40") +
+  annotate("text", x = mean(x), y = logver(mean(x)) - 8, label = "EMV", colour = "#d93025", hjust = -0.2) +
+  annotate("text", x = 30, y = logver(mean(x)) - 8, label = "30 min", colour = "grey40", hjust = -0.2) +
+  labs(x = expression(mu ~ "(minutos)"), y = "log-verosimilitud",
+       title = "Log-verosimilitud de la muestra de marzo de 2023")
+```
+
+El mismo resultado con optimización numérica, como se hace cuando no hay fórmula cerrada (y que además da el error estándar a partir de la curvatura):
+
+```{r}
+ajuste <- optim(par = log(20), fn = function(t) -logver(exp(t)), method = "BFGS", hessian = TRUE)
+mu_num <- exp(ajuste$par)
+se_num <- mu_num * sqrt(1 / ajuste$hessian[1, 1])        # método delta desde log(mu)
+c(EMV_numerico = mu_num, EMV_cerrado = mean(x), error_estandar = se_num, teorico = mean(x) / sqrt(n))
+```
+
+**Principio de invarianza.** El EMV de cualquier función de $\mu$ es la función del EMV. Por ejemplo, la probabilidad de pasar **una hora completa sin atropellamientos** en hora pico, $P(X > 60) = e^{-60/\mu}$:
+
+```{r}
+c(prob_una_hora_sin_atropellamientos = exp(-60 / mean(x)),
+  proporcion_observada = mean(x > 60))
+```
+
+### 3.2.3 Método bayesiano
+
+En el enfoque bayesiano, $\lambda = 1/\mu$ es aleatorio y combinamos lo que ya sabíamos (la **previa**) con los datos. La previa conjugada de la exponencial es la gamma: si $\lambda \sim \text{Gamma}(a, b)$, la posterior es
+
+$$
+\lambda \mid x \sim \text{Gamma}\left(a + n, \ b + \textstyle\sum x_i\right).
+$$
+
+Usamos como información previa los atropellamientos de **2022** (el año anterior a la muestra): una previa centrada en la tasa de 2022, con un peso equivalente a $a$ intervalos.
+
+```{r}
+d2022 <- hora_pico(atropellamientos) |> depurar_duplicados() |> filter(substr(fecha, 1, 4) == "2022")
+mu_2022 <- mean(tiempos_entre(d2022, "2022-01-01", "2022-12-31"))
+a <- 20; b <- a * mu_2022            # previa: media de lambda = a/b = 1/mu_2022, "vale" 20 intervalos
+c(mu_2022 = mu_2022, mu_marzo_2023 = mean(x))
+
+posterior_mu <- function(a, b) (b + suma) / (a + n - 1)    # E[mu | x] = E[1/lambda | x]
+c(media_posterior_mu = posterior_mu(a, b))
+```
+
+La media posterior de $\mu$ es un **promedio ponderado** entre la media previa de $\mu$, $b/(a-1)$, y la media de los datos, $\bar x$:
+
+$$
+E[\mu \mid x] = \frac{b + \sum x_i}{a + n - 1} = w\,\bar x + (1 - w)\,\frac{b}{a - 1}, \qquad w = \frac{n}{n + a - 1}.
+$$
+
+```{r}
+w <- n / (n + a - 1)
+c(peso_de_los_datos = w, media_previa_mu = b / (a - 1),
+  promedio_ponderado = w * mean(x) + (1 - w) * b / (a - 1))
+```
+ Es la misma idea de la **teoría de credibilidad** actuarial: combinar experiencia propia con experiencia externa según cuánta información aporta cada una.
+
+```{r}
+lambda <- seq(0.012, 0.05, length.out = 400)
+curvas <- bind_rows(
+  tibble(lambda, densidad = dgamma(lambda, a, b), curva = "Previa (2022)"),
+  tibble(lambda, densidad = dgamma(lambda, n + 1, suma), curva = "Verosimilitud (normalizada)"),
+  tibble(lambda, densidad = dgamma(lambda, a + n, b + suma), curva = "Posterior"))
+ggplot(curvas, aes(lambda * 60, densidad, colour = curva)) + geom_line(linewidth = 1) +
+  scale_colour_manual(values = c("Previa (2022)" = "grey50", "Verosimilitud (normalizada)" = "#1a73e8", "Posterior" = "#d93025")) +
+  labs(x = "Tasa (atropellamientos por hora)", y = "Densidad", colour = NULL,
+       title = "La posterior combina la experiencia de 2022 con los datos de marzo de 2023") +
+  theme(legend.position = "top")
+```
+
+¿Cuánto depende el resultado de la previa? Variamos su peso:
+
+```{r}
+sapply(c(previa_debil = 2, previa_media = 20, previa_fuerte = 200),
+       function(a) posterior_mu(a, a * mu_2022))
+```
+
+### 3.2.4 Otros métodos: un estimador basado en la mediana
+
+$\tilde\mu = \text{mediana}/\ln 2$ es más robusto a valores extremos. ¿Es mejor que $\bar X$? Lo decide la sección 3.3.
+
+## 3.3 Criterios de evaluación de estimadores
+
+Comparamos estimadores por simulación con valores parecidos a los de nuestros datos ($\mu = 35$ y el mismo $n$ de la muestra).
+
+```{r}
+mu <- 35; B <- 20000
+sim <- replicate(B, { y <- rexp(n, 1 / mu); c(media = mean(y), mediana_ln2 = median(y) / log(2),
+                                               contraida = n / (n + 1) * mean(y)) })
+evalua <- function(est) c(sesgo = mean(est) - mu, varianza = var(est), ECM = mean((est - mu)^2))
+round(t(apply(sim, 1, evalua)), 3)
+```
+
+### 3.3.1 Insesgamiento
+
+$E[\bar X] = \mu$: la media es **insesgada** (el sesgo simulado es prácticamente cero). En cambio, para la **tasa**, $1/\bar X$ está sesgado, porque $E[1/\bar X] = \frac{n}{n-1}\lambda$. El estimador insesgado es $\frac{n-1}{\sum X_i}$:
+
+```{r}
+tasas <- replicate(B, { y <- rexp(n, 1 / mu); c(EMV = 1 / mean(y), insesgado = (n - 1) / sum(y)) })
+rowMeans(tasas) - 1 / mu          # sesgo de cada estimador de la tasa
+```
+
+### 3.3.2–3.3.3 Varianza mínima y error cuadrático medio
+
+El estimador basado en la mediana tiene **varianza mucho mayor**: desperdicia información. Y entre los múltiplos $c\bar X$, el de menor ECM es $\frac{n}{n+1}\bar X$, que está **sesgado** pero tiene menor ECM que la media. Insesgamiento y ECM son criterios distintos: un poco de sesgo puede comprar mucha varianza.
+
+### 3.3.4 Consistencia
+
+Un estimador es consistente si se acerca al parámetro cuando $n$ crece. Lo vemos con los **datos reales**: la media acumulada de los intervalos de 2022-2023, en orden cronológico.
+
+```{r, fig.height = 4}
+todo <- hora_pico(atropellamientos) |> depurar_duplicados() |> filter(fecha < "2024-01-01")
+x_todo <- tiempos_entre(todo, "2022-01-01", "2023-12-31")
+ggplot(tibble(n = seq_along(x_todo), media = cumsum(x_todo) / seq_along(x_todo)), aes(n, media)) +
+  geom_line(colour = "#1a73e8") +
+  geom_hline(yintercept = mean(x_todo), linetype = 2) +
+  coord_cartesian(ylim = c(20, 50)) +
+  labs(x = "Número de intervalos", y = "Media acumulada (minutos)",
+       title = "Consistencia: la media acumulada se estabiliza conforme crece n")
+```
+
+Las oscilaciones del principio duran más de lo que esperaríamos con una muestra aleatoria: en el capítulo 2 vimos que los meses no tienen todos la misma tasa. Aun así, la media acumulada se estabiliza en la media del periodo.
+
+### 3.3.5 Cota inferior de Cramér-Rao
+
+La información de Fisher de la muestra es $I(\mu) = n/\mu^2$, así que ningún estimador insesgado puede tener varianza menor que $\mu^2/n$. Como $\operatorname{Var}(\bar X) = \mu^2/n$, **la media alcanza la cota: es eficiente**.
+
+```{r}
+c(cota_cramer_rao = mu^2 / n, var_media_simulada = var(sim["media", ]),
+  var_mediana_simulada = var(sim["mediana_ln2", ]))
+```
+
+## 3.4 Suficiencia
+
+Por el **teorema de factorización**, $L(\mu) = \mu^{-n}\exp(-T/\mu)$ depende de los datos solo a través de $T = \sum X_i$: **$T$ es suficiente**. Toda la información sobre $\mu$ está en la suma; una vez que la conocemos, cómo se reparte entre los intervalos no dice nada de $\mu$.
+
+**Suficiente minimal.** $T$ es además **minimal**: resume los datos lo más posible sin perder información. Para dos muestras $x$ y $y$ del mismo tamaño, $L(x; \mu)/L(y; \mu) = \exp[-(\sum x_i - \sum y_i)/\mu]$ no depende de $\mu$ solo si $\sum x_i = \sum y_i$: cualquier estadística suficiente tiene que distinguir muestras con sumas distintas.
+
+Lo comprobamos: la forma en que se reparte la suma ($X_1/T$, la fracción que ocupa el primer intervalo) tiene la misma distribución sea cual sea $\mu$.
+
+```{r, fig.height = 3.8}
+reparto <- bind_rows(lapply(c(15, 30, 60), function(m) {
+  tibble(mu = paste("mu =", m), fraccion = replicate(B, { y <- rexp(10, 1 / m); y[1] / sum(y) }))
+}))
+ggplot(reparto, aes(fraccion, colour = mu)) + geom_density(linewidth = 1) +
+  labs(x = "X1 / T", y = "Densidad", colour = NULL,
+       title = "Dado T, el reparto de la muestra no depende de mu: T es suficiente") +
+  theme(legend.position = "top")
+```
+
+Como la exponencial pertenece a la familia exponencial, $T$ además es **completa**. Por el teorema de Lehmann-Scheffé, $\bar X = T/n$ es el **estimador insesgado de varianza mínima** (UMVUE) de $\mu$, y $(n-1)/T$ lo es de la tasa.
+
+## 3.5 Propiedades de los estimadores de máxima verosimilitud
+
+Para muestras grandes, el EMV es aproximadamente normal, insesgado y eficiente:
+
+$$
+\hat\mu \approx N\left(\mu, \ \frac{\mu^2}{n}\right).
+$$
+
+Esto da su **error estándar**, $\hat\mu / \sqrt n$, que usaremos en el capítulo 4 para el intervalo de Wald.
+
+```{r}
+c(EMV = mean(x), error_estandar = mean(x) / sqrt(n))
+```
+
+## Otra forma de verlo: atropellamientos entre tiempo observado
+
+Otra forma de estimar $\mu$: observar la ciudad durante un tiempo total fijo $\tau$ (en marzo, 23 días laborables × 180 minutos) y contar los $N$ atropellamientos. En un proceso de Poisson, $N \sim \text{Poisson}(\lambda\tau)$, y el EMV de la tasa es el número de eventos entre el tiempo observado:
+
+$$
+\hat\lambda = \frac{N}{\tau} \quad \Longrightarrow \quad \hat\mu = \frac{\tau}{N}.
+$$
+
+(Usamos $\tau$ y no $T$ porque $T = \sum X_i$ ya es la estadística suficiente de la sección 3.4.)
+
+```{r}
+marzo <- hora_pico(atropellamientos) |> depurar_duplicados() |> filter(mes == "2023-03")
+eventos <- nrow(marzo)
+dias_laborables <- sum(format(seq(as.Date("2023-03-01"), as.Date("2023-03-31"), by = "day"), "%u") <= "5")
+tiempo_total <- dias_laborables * 180                          # minutos observados en el mes
+c(eventos = eventos, dias = dias_laborables,
+  mu_tiempo_entre_eventos = tiempo_total / eventos, mu_reloj_de_hora_pico = mean(x))
+```
+
+Las dos cifras casi coinciden porque el reloj de hora pico no descarta tiempo. La pequeña diferencia viene de los extremos del mes: $\bar x$ solo usa el tiempo entre el primer y el último atropellamiento de marzo, mientras que $\tau/N$ usa también el tiempo antes del primero y después del último. Ese último tramo es un tiempo **censurado**: sabemos que la espera duró *al menos* hasta el fin del mes, pero no cuánto más. El estimador $\tau/N$ lo aprovecha. El estudio de tiempos que solo se observan en parte es el centro del **análisis de supervivencia**, que se estudia más adelante en la carrera.
+
+## Lo que ya sabemos
+
+- El mejor estimador de $\mu$ es $\bar X$: es el EMV, es insesgado, es eficiente (alcanza Cramér-Rao) y es el UMVUE.
+- En marzo de 2023, $\hat\mu =$ `r round(mean(x), 1)` minutos, con error estándar de `r round(mean(x) / sqrt(n), 1)` minutos.
+- **Falta** convertir el estimador puntual en un **rango de valores plausibles** para $\mu$: el capítulo 4.
