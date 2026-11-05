@@ -6,3 +6,4 @@ chapters/*.html
 chapters/*_files/
 
 /.quarto/
+Rplots.pdf
